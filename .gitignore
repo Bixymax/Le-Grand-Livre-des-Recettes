@@ -1,5 +1,7 @@
 .venv
 data
+.idea
+.git
 .env.spark
 spark-logs
 dashboard/recipes_database.duckdb

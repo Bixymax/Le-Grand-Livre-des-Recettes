@@ -1,0 +1,10 @@
+pyarrow==16.1.0
+pyspark==3.5.1
+delta-spark==3.2.0
+dash==4.1.0
+pandas==2.3.3
+# main.py avec duckdb
+duckdb>=1.1.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+pydantic>=2.0.0
