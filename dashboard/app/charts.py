@@ -463,3 +463,73 @@ def ingredients_top_chart(
         clickmode="event+select"
     )
     return fig
+
+def tags_top_chart(
+    nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None,
+    top_n: int = 15,
+) -> go.Figure:
+    """
+    Nouveau graphique dynamique : Top N des tags / catégories.
+    """
+    extra_clauses = []
+    params = []
+
+    if nutri_scores:
+        placeholders = ",".join(["?"] * len(nutri_scores))
+        extra_clauses.append(f"nutri_score IN ({placeholders})")
+        params.extend(nutri_scores)
+    if cook_cats:
+        placeholders = ",".join(["?"] * len(cook_cats))
+        extra_clauses.append(f"cook_time_category IN ({placeholders})")
+        params.extend(cook_cats)
+    if kcal_min is not None:
+        extra_clauses.append("energy_kcal >= ?")
+        params.append(kcal_min)
+    if kcal_max is not None:
+        extra_clauses.append("energy_kcal <= ?")
+        params.append(kcal_max)
+
+    where = ("WHERE " + " AND ".join(extra_clauses)) if extra_clauses else ""
+
+    # UNNEST du tableau des tags
+    sql = f"""
+        SELECT tag, COUNT(*) AS freq
+        FROM (
+            SELECT UNNEST(tags) AS tag
+            FROM recipes_main
+            {where}
+        ) sub
+        WHERE tag IS NOT NULL AND LENGTH(TRIM(tag)) > 1
+        GROUP BY tag
+        ORDER BY freq DESC
+        LIMIT ?
+    """
+    params.append(top_n)
+
+    try:
+        df = con.cursor().execute(sql, params).df()
+    except Exception:
+        df = pd.DataFrame(columns=["tag", "freq"])
+
+    if df.empty:
+        fig = go.Figure()
+        fig.update_layout(**PLOT_LAYOUT, title=dict(text="Aucun tag disponible", x=0.5, font_size=13))
+        return fig
+
+    # On utilise "accent3" pour le différencier visuellement des ingrédients
+    fig = go.Figure(go.Bar(
+        x=df["freq"],
+        y=df["tag"],
+        orientation="h",
+        marker_color=PALETTE["accent3"],
+        marker_line_width=0,
+        hovertemplate="<b>%{y}</b><br>%{x:,} recettes<extra></extra>",
+    ))
+    fig.update_layout(
+        **PLOT_LAYOUT,
+        title=dict(text=f"Top {top_n} Tags & Catégories", x=0.5, font_size=13),
+        xaxis_title="recettes", yaxis_title="",
+        yaxis=dict(autorange="reversed", tickfont_size=10),
+        xaxis=dict(showgrid=True, gridcolor=PALETTE["border"]),
+    )
+    return fig

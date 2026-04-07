@@ -579,9 +579,18 @@ def build_layout():
             # ----------------------------------------------------------------
             # Ligne 6 : Top ingrédients (nouveau graphique dynamique)
             # ----------------------------------------------------------------
-            card([dcc.Graph(
-                id="graph-ingredients-top", figure={},
-                config={"displayModeBar": False}, style={"height": "320px"},
-            )], style={"marginBottom": "16px"}),
+            html.Div(
+                style={"display": "grid", "gridTemplateColumns": "1fr 1fr", "gap": "16px", "marginBottom": "16px"},
+                children=[
+                    card([dcc.Graph(
+                        id="graph-ingredients-top", figure={},
+                        config={"displayModeBar": False}, style={"height": "320px"},
+                    )]),
+                    card([dcc.Graph(
+                        id="graph-tags-top", figure={},
+                        config={"displayModeBar": False}, style={"height": "320px"},
+                    )]),
+                ],
+            ),
         ],
     )

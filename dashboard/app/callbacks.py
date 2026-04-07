@@ -17,7 +17,7 @@ from dash import Input, Output, State, html, dcc, ctx
 from .charts import (
     kcal_histogram, nutri_pie, nutri_bar,
     cook_time_chart, cook_time_curve, scatter_saturates_sugars,
-    ingredients_top_chart,
+    ingredients_top_chart, tags_top_chart
 )
 from .config import PALETTE, NUTRI_COLORS
 from .data import con, RECIPE_COLS
@@ -321,6 +321,7 @@ def register_callbacks(app: dash.Dash):
         Output("graph-cook-curve", "figure"),
         Output("graph-scatter-kcal", "figure"),
         Output("graph-ingredients-top", "figure"),
+        Output("graph-tags-top", "figure"),
         Input("init-interval", "n_intervals"),
         Input("store-filters", "data"),
     )
@@ -334,6 +335,7 @@ def register_callbacks(app: dash.Dash):
             cook_time_curve(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax),
             scatter_saturates_sugars(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax),
             ingredients_top_chart(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax),
+            tags_top_chart(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax),
         )
 
     # -----------------------------------------------------------------------
