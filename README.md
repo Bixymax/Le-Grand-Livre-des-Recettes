@@ -1,3 +1,9 @@
+![Python](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![PySpark](https://img.shields.io/badge/PySpark-E25A1C?style=for-the-badge&logo=apachespark&logoColor=white)
+![DuckDB](https://img.shields.io/badge/DuckDB-FFF000?style=for-the-badge&logo=duckdb&logoColor=black)
+![Plotly Dash](https://img.shields.io/badge/Dash_Plotly-0080FF?style=for-the-badge&logo=plotly&logoColor=white)
+![Delta Lake](https://img.shields.io/badge/Delta_Lake-00AEEF?style=for-the-badge&logo=databricks&logoColor=white)
+
 # 📖 Le Grand Livre des Recettes : Pipeline Data & Dashboard Analytique
 
 Un projet Data Full-Stack qui ingère, nettoie, enrichit, indexe et visualise plus d'un million de recettes de cuisine. Ce projet illustre la fusion de deux datasets majeurs (le dataset massif du **MIT** et celui de **Food.com via Kaggle**) en combinant le traitement Big Data (PySpark & Delta Lake), un moteur de recherche textuel ultra-rapide (DuckDB) et une interface utilisateur interactive (Dash & Plotly).
