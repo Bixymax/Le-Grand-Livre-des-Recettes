@@ -20,7 +20,7 @@ _image_urls_select = (
 # Statistiques globales
 # ---------------------------------------------------------------------------
 
-_stats = con.execute("""
+_stats = con.cursor().execute("""
     SELECT
         COUNT(*)                                                             AS total,
         COUNT(*) FILTER (WHERE has_image = true)                             AS with_image,
@@ -38,13 +38,13 @@ TOTAL_RECIPES, TOTAL_WITH_IMAGE, TOTAL_WITH_NUTRITION, AVG_KCAL, AVG_COOK_MIN, P
     _stats[3] or 0, _stats[4] or 0, _stats[5] or 0,
 )
 
-_top_nutri = con.execute("""
+_top_nutri = con.cursor().execute("""
     SELECT nutri_score FROM recipes_main WHERE nutri_score IS NOT NULL
     GROUP BY nutri_score ORDER BY COUNT(*) DESC LIMIT 1
 """).fetchone()
 TOP_NUTRI_SCORE = _top_nutri[0] if _top_nutri else "?"
 
-PCT_A_B = con.execute("""
+PCT_A_B = con.cursor().execute("""
     SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE nutri_score IN ('A', 'B'))
                  / NULLIF(COUNT(*) FILTER (WHERE nutri_score IS NOT NULL), 0))
     FROM recipes_main
@@ -52,7 +52,7 @@ PCT_A_B = con.execute("""
 
 try:
     AVG_STEPS = (
-        con.execute(
+        con.cursor().execute(
             "SELECT ROUND(AVG(n_steps)) FROM recipes_main WHERE n_steps IS NOT NULL"
         ).fetchone()[0] or 0
     )
@@ -63,11 +63,14 @@ except Exception:
 # Pré-calcul des IDs de recettes avec image
 # ---------------------------------------------------------------------------
 
-RECIPE_IDS_WITH_IMAGE = (
-    con.execute("SELECT recipe_id FROM recipes_main WHERE has_image = true")
-    .df()["recipe_id"]
-    .tolist()
-)
+random_id_df = con.cursor().execute("""
+    SELECT recipe_id 
+    FROM recipes_main 
+    WHERE has_image = true 
+    USING SAMPLE 1
+""").df()
+
+rid = random_id_df.iloc[0]["recipe_id"] if not random_id_df.empty else None
 
 # ---------------------------------------------------------------------------
 # Colonnes minimales pour l'affichage d'une recette

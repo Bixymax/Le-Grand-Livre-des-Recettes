@@ -2,9 +2,9 @@
 Usines à figures Plotly — toutes les fonctions retournent un go.Figure.
 """
 
+import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import pandas as pd
 
 from .config import PALETTE, NUTRI_COLORS, PLOT_LAYOUT
 from .data import con
@@ -13,7 +13,7 @@ from .data import con
 def kcal_histogram() -> go.Figure:
     # OPT P7 : lit uniquement recipes_main, pas la vue avec JOIN
     df = con.cursor().execute(
-    "SELECT energy_kcal FROM recipes_main WHERE energy_kcal IS NOT NULL AND energy_kcal < 3500"
+        "SELECT energy_kcal FROM recipes_main WHERE energy_kcal IS NOT NULL AND energy_kcal < 3500"
     ).df()
     fig = px.histogram(df, x="energy_kcal", nbins=60, color_discrete_sequence=[PALETTE["accent1"]])
     fig.update_traces(marker_line_width=0.5, marker_line_color="white")
@@ -72,11 +72,13 @@ def nutri_pie() -> go.Figure:
 
 def nutri_bar() -> go.Figure:
     # OPT P7 : lit uniquement recipes_main
-    counts = con.execute("""
-        SELECT nutri_score AS score, COUNT(*) AS count
-        FROM recipes_main WHERE nutri_score IS NOT NULL
-        GROUP BY nutri_score ORDER BY score
-    """).df()
+    counts = con.cursor().execute("""
+                                  SELECT nutri_score AS score, COUNT(*) AS count
+                                  FROM recipes_main
+                                  WHERE nutri_score IS NOT NULL
+                                  GROUP BY nutri_score
+                                  ORDER BY score
+                                  """).df()
     fig = px.bar(
         counts, x="count", y="score", orientation="h",
         color="score", color_discrete_map=NUTRI_COLORS,
@@ -93,11 +95,12 @@ def nutri_bar() -> go.Figure:
 
 def cook_time_chart() -> go.Figure:
     # OPT P7 : lit uniquement recipes_main
-    df = con.execute("""
-        SELECT cook_time_category, COUNT(*) AS count
-        FROM recipes_main WHERE cook_time_category IN ('rapide', 'moyen', 'long')
-        GROUP BY cook_time_category
-    """).df()
+    df = con.cursor().execute("""
+                              SELECT cook_time_category, COUNT(*) AS count
+                              FROM recipes_main
+                              WHERE cook_time_category IN ('rapide', 'moyen', 'long')
+                              GROUP BY cook_time_category
+                              """).df()
     ct = df.set_index("cook_time_category").reindex(["rapide", "moyen", "long"]).reset_index()
     colors = [PALETTE["accent2"], PALETTE["accent4"], PALETTE["accent3"]]
     fig = go.Figure(go.Bar(
@@ -115,11 +118,13 @@ def cook_time_chart() -> go.Figure:
 
 def cook_time_curve() -> go.Figure:
     # OPT P7 : lit uniquement recipes_main
-    df = con.execute("""
-        SELECT FLOOR(cook_minutes / 5) * 5 AS bucket, COUNT(*) AS count
-        FROM recipes_main WHERE cook_minutes IS NOT NULL AND cook_minutes BETWEEN 1 AND 300
-        GROUP BY bucket ORDER BY bucket
-    """).df()
+    df = con.cursor().execute("""
+                              SELECT FLOOR(cook_minutes / 5) * 5 AS bucket, COUNT(*) AS count
+                              FROM recipes_main
+                              WHERE cook_minutes IS NOT NULL AND cook_minutes BETWEEN 1 AND 300
+                              GROUP BY bucket
+                              ORDER BY bucket
+                              """).df()
     fig = go.Figure(go.Scatter(
         x=df["bucket"], y=df["count"], mode="lines",
         line=dict(color=PALETTE["accent4"], width=2.5, shape="spline", smoothing=1.2),
@@ -140,17 +145,16 @@ def scatter_saturates_sugars() -> go.Figure:
     Graisses saturées (x) vs Sucres (y), coloré par Nutri-Score.
     OPT P7 : joint recipes_nutrition_detail ← recipes_main plutôt que la vue recipes.
     """
-    df = con.execute("""
-        SELECT n.saturates_g, n.sugars_g, COALESCE(m.nutri_score, '?') AS nutri_score
-        FROM recipes_nutrition n
-        JOIN recipes_main m ON n.recipe_id = m.recipe_id
-        WHERE n.saturates_g IS NOT NULL
-          AND n.sugars_g    IS NOT NULL
-          AND m.nutri_score IS NOT NULL
-          AND n.saturates_g BETWEEN 0 AND 60
-          AND n.sugars_g    BETWEEN 0 AND 100
-        USING SAMPLE 2000 ROWS
-    """).df()
+    df = con.cursor().execute("""
+                              SELECT n.saturates_g, n.sugars_g, COALESCE(m.nutri_score, '?') AS nutri_score
+                              FROM recipes_nutrition n
+                                       JOIN recipes_main m ON n.recipe_id = m.recipe_id
+                              WHERE n.saturates_g IS NOT NULL
+                                AND n.sugars_g IS NOT NULL
+                                AND m.nutri_score IS NOT NULL
+                                AND n.saturates_g BETWEEN 0 AND 60
+                                AND n.sugars_g BETWEEN 0 AND 100 USING SAMPLE 2000 ROWS
+                              """).df()
     df["nutri_score"] = pd.Categorical(
         df["nutri_score"], categories=["A", "B", "C", "D", "E", "?"], ordered=True
     )
