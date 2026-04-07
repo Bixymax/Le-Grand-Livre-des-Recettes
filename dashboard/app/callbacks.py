@@ -19,24 +19,6 @@ from .charts import (
 )
 
 # ---------------------------------------------------------------------------
-# Activation du FTS DuckDB
-# ---------------------------------------------------------------------------
-
-con.execute("INSTALL fts; LOAD fts;")
-con.execute("""
-    PRAGMA create_fts_index(
-        'recipes_main', 'recipe_id', 'title', 'ingredients_raw',
-        stemmer  = 'french',
-        stopwords= 'none',  
-        lower    = 1,
-        strip_accents = 1,
-        overwrite= 1
-    );
-""")
-print("✅ Index FTS créé sur recipes_main")
-
-
-# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 

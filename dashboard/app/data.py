@@ -5,16 +5,17 @@ Connexion DuckDB et statistiques globales sans données mock.
 import os
 import duckdb
 
-DATA_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "data", "recipes_parquets")
+DB_PATH = os.path.join(os.path.dirname(__file__), "..", "recipes_catalog.duckdb")
 
-con = duckdb.connect(":memory:")
+con = duckdb.connect(DB_PATH, read_only=True)
+print("✅ DuckDB connecté à la base persistante")
 
 # ---------------------------------------------------------------------------
 # Initialisation des vues DuckDB
 # ---------------------------------------------------------------------------
 
-_recipes_main_path = os.path.join(DATA_PATH, "recipes_main")
-_nutrition_detail_path = os.path.join(DATA_PATH, "recipes_nutrition_detail")
+_recipes_main_path = os.path.join(DB_PATH, "recipes_main")
+_nutrition_detail_path = os.path.join(DB_PATH, "recipes_nutrition_detail")
 
 con.execute(f"""
     CREATE TABLE recipes_main AS
