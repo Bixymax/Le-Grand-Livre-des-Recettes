@@ -181,7 +181,7 @@ def register_callbacks(app: dash.Dash):
                 ORDER BY score DESC
                 LIMIT 8
                 """,
-                [query.strip()],
+                [query.strip(), query.strip()],
             ).df()
 
             if df_res.empty:

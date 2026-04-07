@@ -5,41 +5,16 @@ Connexion DuckDB et statistiques globales sans données mock.
 import os
 import duckdb
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "..", "recipes_catalog.duckdb")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "..", "..", "data", "../data/recipes_catalog.duckdb")
 
 con = duckdb.connect(DB_PATH, read_only=True)
 print("✅ DuckDB connecté à la base persistante")
 
-# ---------------------------------------------------------------------------
-# Initialisation des vues DuckDB
-# ---------------------------------------------------------------------------
-
-_recipes_main_path = os.path.join(DB_PATH, "recipes_main")
-_nutrition_detail_path = os.path.join(DB_PATH, "recipes_nutrition_detail")
-
-con.execute(f"""
-    CREATE TABLE recipes_main AS
-    SELECT * FROM read_parquet('{_recipes_main_path}/**/*.parquet', hive_partitioning=true)
-""")
-con.execute(f"""
-    CREATE VIEW recipes_nutrition AS
-    SELECT * FROM read_parquet('{_nutrition_detail_path}/**/*.parquet', hive_partitioning=true)
-""")
-print("✅ DuckDB connecté aux Parquets")
-
-# Détecte si la colonne image_urls (tableau) existe dans recipes_main
 _main_cols = {row[0] for row in con.execute("DESCRIBE recipes_main").fetchall()}
 _image_urls_select = (
     "m.image_urls" if "image_urls" in _main_cols else "NULL::VARCHAR[] AS image_urls"
 )
-
-con.execute(f"""
-    CREATE VIEW recipes AS
-    SELECT m.*, {_image_urls_select},
-           n.fat_g, n.protein_g, n.salt_g, n.sugars_g, n.saturates_g
-    FROM recipes_main m
-    LEFT JOIN recipes_nutrition n ON m.recipe_id = n.recipe_id
-""")
 
 # ---------------------------------------------------------------------------
 # Statistiques globales
@@ -105,7 +80,7 @@ RECIPE_COLS = """
     m.ingredients_validated,
     m.cook_minutes,
     m.image_url,
-    {image_urls_select},
+    m.image_urls,
     m.energy_kcal,
     m.nutri_score,
     n.fat_g,
@@ -113,4 +88,4 @@ RECIPE_COLS = """
     n.sugars_g,
     n.salt_g,
     n.saturates_g
-""".format(image_urls_select=_image_urls_select)
+"""

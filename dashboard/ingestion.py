@@ -5,8 +5,8 @@ import time
 # --- Configuration des chemins ---
 # À adapter selon l'arborescence exacte de ton projet
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DATA_PATH = os.path.join(BASE_DIR, "..", "..", "data", "recipes_parquets")
-DB_PATH = os.path.join(BASE_DIR, "recipes_catalog.duckdb")
+DATA_PATH = os.path.join(BASE_DIR, "..", "data", "recipes_parquets")
+DB_PATH = os.path.join(BASE_DIR, "..", "data", "../data/recipes_catalog.duckdb")
 
 
 def run_ingestion():
@@ -24,31 +24,35 @@ def run_ingestion():
     _recipes_main_path = os.path.join(DATA_PATH, "recipes_main")
     _nutrition_detail_path = os.path.join(DATA_PATH, "recipes_nutrition_detail")
 
-    # 2. Importation des données dans des TABLES physiques
-    print("📦 Importation de recipes_main (cela peut prendre un moment)...")
+    # Installe et charge l'extension Delta
+    con.execute("INSTALL delta; LOAD delta;")
+
+    # 2. Importation des données
+    print("📦 Importation de recipes_main...")
     con.execute(f"""
-        CREATE TABLE recipes_main AS
-        SELECT * FROM read_parquet('{_recipes_main_path}/**/*.parquet', hive_partitioning=true)
-    """)
+            CREATE TABLE recipes_main AS
+            SELECT * FROM delta_scan('{_recipes_main_path}')
+        """)
 
     print("📦 Importation de recipes_nutrition...")
     con.execute(f"""
-        CREATE TABLE recipes_nutrition AS
-        SELECT * FROM read_parquet('{_nutrition_detail_path}/**/*.parquet', hive_partitioning=true)
-    """)
+            CREATE TABLE recipes_nutrition AS
+            SELECT * FROM delta_scan('{_nutrition_detail_path}')
+        """)
 
-    # 3. Création de la vue combinée (pour simplifier tes requêtes Dash)
+    # 3. Création de la vue combinée
     print("🔗 Création de la vue 'recipes'...")
-    _main_cols = {row[0] for row in con.execute("DESCRIBE recipes_main").fetchall()}
-    _image_urls_select = "m.image_urls" if "image_urls" in _main_cols else "NULL::VARCHAR[] AS image_urls"
-
-    con.execute(f"""
-        CREATE VIEW recipes AS
-        SELECT m.*, {_image_urls_select},
-               n.fat_g, n.protein_g, n.salt_g, n.sugars_g, n.saturates_g
-        FROM recipes_main m
-        LEFT JOIN recipes_nutrition n ON m.recipe_id = n.recipe_id
-    """)
+    con.execute("""
+                CREATE VIEW recipes AS
+                SELECT m.*,
+                       n.fat_g,
+                       n.protein_g,
+                       n.salt_g,
+                       n.sugars_g,
+                       n.saturates_g
+                FROM recipes_main m
+                         LEFT JOIN recipes_nutrition n ON m.recipe_id = n.recipe_id
+                """)
 
     # 4. Création de l'index FTS (sur 'ingredients_validated' pour éviter l'erreur si 'raw' n'existe pas)
     print("🔍 Création de l'index de recherche FTS...")
