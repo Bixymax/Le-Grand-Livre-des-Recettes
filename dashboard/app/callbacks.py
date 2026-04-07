@@ -4,19 +4,19 @@ Callbacks Dash — version optimisée sans fallbacks.
 
 import ast
 import json
-import random
 
 import dash
 import numpy as np
 import pandas as pd
 from dash import Input, Output, State, html
 
-from .config import PALETTE, NUTRI_COLORS
-from .data import con, RECIPE_COLS, RECIPE_IDS_WITH_IMAGE
 from .charts import (
     kcal_histogram, nutri_pie, nutri_bar,
     cook_time_chart, cook_time_curve, scatter_saturates_sugars,
 )
+from .config import PALETTE, NUTRI_COLORS
+from .data import con, RECIPE_COLS
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -140,13 +140,12 @@ def _fetch_recipe_by_id(recipe_id: str):
 # ---------------------------------------------------------------------------
 
 def register_callbacks(app: dash.Dash):
-
     @app.callback(
-        Output("graph-kcal-hist",    "figure"),
-        Output("graph-nutri-pie",    "figure"),
-        Output("graph-nutri-bar",    "figure"),
-        Output("graph-cook-times",   "figure"),
-        Output("graph-cook-curve",   "figure"),
+        Output("graph-kcal-hist", "figure"),
+        Output("graph-nutri-pie", "figure"),
+        Output("graph-nutri-bar", "figure"),
+        Output("graph-cook-times", "figure"),
+        Output("graph-cook-curve", "figure"),
         Output("graph-scatter-kcal", "figure"),
         Input("init-interval", "n_intervals"),
     )
@@ -174,12 +173,14 @@ def register_callbacks(app: dash.Dash):
         try:
             df_res = con.cursor().execute(
                 """
-                SELECT recipe_id, title, nutri_score, cook_time_category,
+                SELECT recipe_id,
+                       title,
+                       nutri_score,
+                       cook_time_category,
                        fts_main_recipes_main.match_bm25(recipe_id, ?) AS score
                 FROM recipes_main
                 WHERE fts_main_recipes_main.match_bm25(recipe_id, ?) IS NOT NULL
-                ORDER BY score DESC
-                LIMIT 8
+                ORDER BY score DESC LIMIT 8
                 """,
                 [query.strip(), query.strip()],
             ).df()
@@ -229,7 +230,6 @@ def register_callbacks(app: dash.Dash):
                 style={"color": PALETTE["accent3"], "fontStyle": "italic"},
             )
 
-
     @app.callback(
         Output("store-selected-recipe-id", "data"),
         Input({"type": "search-result-item", "index": dash.ALL}, "n_clicks"),
@@ -246,17 +246,16 @@ def register_callbacks(app: dash.Dash):
         id_dict = json.loads(triggered_id.replace(".n_clicks", ""))
         return id_dict.get("index")
 
-
     @app.callback(
-        Output("recipe-image-container",    "children"),
-        Output("recipe-title",              "children"),
-        Output("store-recipe-idx",          "data"),
+        Output("recipe-image-container", "children"),
+        Output("recipe-title", "children"),
+        Output("store-recipe-idx", "data"),
         Output("recipe-instructions-short", "children"),
-        Output("recipe-instructions-content","children"),
-        Output("ingredients-list",          "children"),
-        Input("btn-random-recipe",          "n_clicks"),
-        Input("init-interval",              "n_intervals"),
-        Input("store-selected-recipe-id",   "data"),
+        Output("recipe-instructions-content", "children"),
+        Output("ingredients-list", "children"),
+        Input("btn-random-recipe", "n_clicks"),
+        Input("init-interval", "n_intervals"),
+        Input("store-selected-recipe-id", "data"),
         prevent_initial_call=False,
     )
     def update_recipe_panel(n_clicks, n_intervals, selected_recipe_id):
@@ -268,10 +267,17 @@ def register_callbacks(app: dash.Dash):
             if not df.empty:
                 return _build_recipe_outputs(df.iloc[0])
 
-        rid = random.choice(RECIPE_IDS_WITH_IMAGE)
-        df_recipe = _fetch_recipe_by_id(rid)
+        # Demande à DuckDB de tirer au sort 1 recette ayant une image
+        random_id_df = con.cursor().execute("""
+                                            SELECT recipe_id
+                                            FROM recipes_main
+                                            WHERE has_image = true USING SAMPLE 1
+                                            """).df()
 
-        if df_recipe.empty:
+        if random_id_df.empty:
             return html.Div("Pas d'image"), "Pas de recette", 0, "", "", ""
+
+        rid = random_id_df.iloc[0]["recipe_id"]
+        df_recipe = _fetch_recipe_by_id(rid)
 
         return _build_recipe_outputs(df_recipe.iloc[0])
