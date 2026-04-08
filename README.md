@@ -63,11 +63,13 @@ Assurez-vous d'avoir Python 3.8+ installé. Il est recommandé d'utiliser un env
 
 ```bash
 # Création et activation de l'environnement virtuel
-python -m venv venv
-source venv/bin/activate  # Sur Windows : venv\Scripts\activate
+python -m venv .venv
+
+# Sur Windows: .venv\Scripts\activate
+# Sur Mac/Linux: source .venv/bin/activate
 
 # Installation des dépendances
-pip install requirements.txt
+pip install -r requirements.txt
 ```
 
 ### 2. Éxecution du Pipeline ETL (PySpark)
