@@ -1,18 +1,17 @@
 """
-Callbacks Dash — chargement du texte immédiat, image en différé.
-Dashboard dynamique v2 : filtres globaux + cross-filtering entre graphiques.
+Callbacks Dash pour l'interactivité du Grand Livre des Recettes.
+Gère les filtres globaux, le cross-filtering, la recherche FTS et le chargement asynchrone.
 """
 
 import ast
 import json
-import threading
 from urllib.request import urlopen
 from urllib.error import URLError, HTTPError
 
 import dash
 import numpy as np
 import pandas as pd
-from dash import Input, Output, State, html, dcc, ctx
+from dash import Input, Output, State, html, dcc
 
 from .charts import (
     kcal_histogram, nutri_pie, nutri_bar,
@@ -23,28 +22,21 @@ from .config import PALETTE, NUTRI_COLORS
 from .data import con, RECIPE_COLS
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _find_valid_image_url(image_url: str, image_urls) -> str:
-    candidates = []
-    if image_url:
-        candidates.append(image_url)
+# Helpers : Traitement des données
+def _find_valid_image_url(image_url: str, image_urls: list | np.ndarray) -> str:
+    """Retourne la première URL d'image valide (HTTP 200)."""
+    candidates = [image_url] if image_url else []
 
     if image_urls is not None:
-        if isinstance(image_urls, np.ndarray):
-            image_urls = image_urls.tolist()
-        if isinstance(image_urls, list):
-            for u in image_urls:
-                if u and u not in candidates:
-                    candidates.append(u)
+        urls_list = image_urls.tolist() if isinstance(image_urls, np.ndarray) else image_urls
+        candidates.extend([u for u in urls_list if u and u not in candidates])
 
     for url in candidates:
         try:
-            req = urlopen(url, timeout=3)
+            # Timeout court pour ne pas figer le layout en cas d'URL morte
+            req = urlopen(url, timeout=2)
             content_type = req.headers.get("Content-Type", "")
-            if req.status == 200 and ("image" in content_type or content_type == ""):
+            if req.status == 200 and ("image" in content_type or not content_type):
                 return url
         except (HTTPError, URLError, Exception):
             continue
@@ -53,24 +45,26 @@ def _find_valid_image_url(image_url: str, image_urls) -> str:
 
 
 def _format_instructions(raw_text: str) -> list[str]:
+    """Nettoie et formate le texte brut des instructions."""
     if not isinstance(raw_text, str) or not raw_text:
         return ["1. Instructions non disponibles."]
-    raw_steps = raw_text.split("|")
+
+    # Séparation selon le délimiteur existant ou par saut de ligne
+    raw_steps = raw_text.split("|") if "|" in raw_text else raw_text.split("\n")
     cleaned = [s.strip() for s in raw_steps if s.strip()]
+
+    if not cleaned:
+        return ["1. Instructions non disponibles."]
+
     return [f"{i + 1}. {step}" for i, step in enumerate(cleaned)]
 
 
-def _build_recipe_text_outputs(row):
+def _build_recipe_text_outputs(row: pd.Series) -> tuple:
+    """Génère les composants HTML à partir d'une ligne du DataFrame recette."""
     title_str = row.get("title", "—")
+    steps = _format_instructions(str(row.get("instructions_text") or ""))
 
-    instructions_raw = str(row.get("instructions_text") or "")
-    if "|" in instructions_raw:
-        steps = _format_instructions(instructions_raw)
-    else:
-        steps = [s.strip() for s in instructions_raw.split("\n") if s.strip()]
-        if not steps:
-            steps = ["1. Instructions non disponibles."]
-
+    # Gestion sécurisée du temps de cuisson
     try:
         cook_min = 0 if pd.isna(row.get("cook_minutes")) else int(row.get("cook_minutes"))
     except (ValueError, TypeError):
@@ -80,7 +74,7 @@ def _build_recipe_text_outputs(row):
     n_score_display = n_score if pd.notna(n_score) and n_score else "?"
     energy = row.get("energy_kcal")
 
-    def get_macro(key):
+    def get_macro(key: str) -> str:
         val = row.get(key)
         return str(val) if pd.notna(val) else "-"
 
@@ -93,10 +87,12 @@ def _build_recipe_text_outputs(row):
             "fontSize": "0.7rem", "fontWeight": "bold", "marginRight": "8px",
         },
     )
+
     kcal_text = html.Span(
         f"{int(energy)} kcal" if pd.notna(energy) else "Kcal inconnues",
         style={"fontSize": "0.85rem", "fontWeight": "600", "color": PALETTE["text"]},
     )
+
     short_text_div = html.Div([
         html.Div(
             f"{len(steps)} étape(s) • {cook_min} min",
@@ -112,10 +108,12 @@ def _build_recipe_text_outputs(row):
 
     content = [html.P(s, style={"margin": "0 0 6px 0", "breakInside": "avoid"}) for s in steps]
 
+    # Parsing robuste des ingrédients
     ings_raw = row.get("ingredients_validated")
     if isinstance(ings_raw, np.ndarray):
         ings_raw = ings_raw.tolist()
-    if ings_raw is None or (isinstance(ings_raw, float) and pd.isna(ings_raw)):
+
+    if not ings_raw or pd.isna(ings_raw).all() if isinstance(ings_raw, float) else False:
         ings_raw = []
     elif isinstance(ings_raw, str):
         try:
@@ -125,14 +123,14 @@ def _build_recipe_text_outputs(row):
 
     ings_items = (
         [html.Li(f"– {ing}", style={"paddingLeft": "4px"}) for ing in ings_raw[:14]]
-        if ings_raw
-        else [html.Li("– Non disponible", style={"color": PALETTE["muted"]})]
+        if ings_raw else [html.Li("– Non disponible", style={"color": PALETTE["muted"]})]
     )
 
     return title_str, 0, short_text_div, content, ings_items
 
 
-def _placeholder_image():
+def _placeholder_image() -> html.Div:
+    """Retourne un composant d'attente pendant la résolution de l'URL de l'image."""
     return html.Div(
         html.Div("⏳ Chargement de l'image…", style={
             "height": "100%", "width": "100%",
@@ -144,44 +142,52 @@ def _placeholder_image():
     )
 
 
-def _fetch_recipe_by_id(recipe_id: str):
-    return con.cursor().execute(
-        f"""
+def _fetch_recipe_by_id(recipe_id: str) -> pd.DataFrame:
+    """Récupère toutes les données nécessaires pour l'affichage d'une recette."""
+    return con.execute(f"""
         SELECT {RECIPE_COLS}
         FROM recipes_main m
         LEFT JOIN recipes_nutrition n ON m.recipe_id = n.recipe_id
         WHERE m.recipe_id = ?
         LIMIT 1
-        """,
-        [recipe_id],
-    ).df()
+    """, [recipe_id]).df()
+
+
+def _extract_recipe_payload(df: pd.DataFrame) -> tuple:
+    """Génère la payload complète de mise à jour du layout pour une recette donnée."""
+    row = df.iloc[0]
+    title, idx, short, content, ings = _build_recipe_text_outputs(row)
+
+    urls = row.get("image_urls")
+    urls_list = urls.tolist() if isinstance(urls, np.ndarray) else (urls or [])
+
+    urls_payload = {
+        "image_url": row.get("image_url") or "",
+        "image_urls": urls_list,
+    }
+    return _placeholder_image(), title, idx, short, content, ings, urls_payload
 
 
 def _unpack_filters(filters: dict) -> tuple:
-    """Extrait les paramètres de filtre du store."""
+    """Extrait et standardise les filtres du store pour les requêtes SQL."""
     if not filters:
-        return [], [], None, None
-    nutri = filters.get("nutri_scores") or []
-    cook = filters.get("cook_cats") or []
+        return None, None, None, None
+
+    nutri = filters.get("nutri_scores") or None
+    cook = filters.get("cook_cats") or None
     kcal_min = filters.get("kcal_min")
     kcal_max = filters.get("kcal_max")
-    # Ignorer les valeurs par défaut comme si pas de filtre
-    if kcal_min == 0:
-        kcal_min = None
-    if kcal_max == 3500:
-        kcal_max = None
-    return nutri or None, cook or None, kcal_min, kcal_max
+
+    kcal_min = None if kcal_min == 0 else kcal_min
+    kcal_max = None if kcal_max == 3500 else kcal_max
+
+    return nutri, cook, kcal_min, kcal_max
 
 
-# ---------------------------------------------------------------------------
 # Enregistrement des callbacks
-# ---------------------------------------------------------------------------
-
 def register_callbacks(app: dash.Dash):
 
-    # -----------------------------------------------------------------------
-    # FILTRE : mise à jour du Store depuis les contrôles + click sur graphiques
-    # -----------------------------------------------------------------------
+    # Gestion du panneau de filtres (Store)
     @app.callback(
         Output("store-filters", "data"),
         Output("filter-nutri", "value"),
@@ -196,18 +202,13 @@ def register_callbacks(app: dash.Dash):
         State("store-filters", "data"),
         prevent_initial_call=False,
     )
-    def update_filter_store(
-        nutri_val, cook_val, kcal_val,
-        nutri_click, cook_click, reset_clicks,
-        current_filters,
-    ):
-        triggered_id = ctx.triggered_id if ctx.triggered_id else ""
+    def update_filter_store(nutri_val, cook_val, kcal_val, nutri_click, cook_click, reset_clicks, current_filters):
+        triggered_id = dash.ctx.triggered_id or ""
 
-        # Réinitialisation
         if triggered_id == "btn-reset-filters":
             return {"nutri_scores": [], "cook_cats": [], "kcal_min": 0, "kcal_max": 3500}, [], [], [0, 3500]
 
-        # Click sur barre Nutri-Score → toggle le score
+        # Cross-filtering : clic sur la répartition Nutri-Score
         if triggered_id == "graph-nutri-bar" and nutri_click:
             clicked_score = nutri_click["points"][0]["y"]
             current_nutri = list(nutri_val or [])
@@ -215,13 +216,11 @@ def register_callbacks(app: dash.Dash):
                 current_nutri.remove(clicked_score)
             else:
                 current_nutri.append(clicked_score)
-            new_filters = {
-                **(current_filters or {}),
-                "nutri_scores": current_nutri,
-            }
+
+            new_filters = {**(current_filters or {}), "nutri_scores": current_nutri}
             return new_filters, current_nutri, cook_val, kcal_val
 
-        # Click sur barre temps de cuisson → toggle la catégorie
+        # Cross-filtering : clic sur les temps de cuisson
         if triggered_id == "graph-cook-times" and cook_click:
             clicked_cat = cook_click["points"][0]["x"]
             current_cook = list(cook_val or [])
@@ -229,13 +228,11 @@ def register_callbacks(app: dash.Dash):
                 current_cook.remove(clicked_cat)
             else:
                 current_cook.append(clicked_cat)
-            new_filters = {
-                **(current_filters or {}),
-                "cook_cats": current_cook,
-            }
+
+            new_filters = {**(current_filters or {}), "cook_cats": current_cook}
             return new_filters, nutri_val, current_cook, kcal_val
 
-        # Mise à jour normale depuis les contrôles
+        # Modification manuelle depuis les composants UI
         new_filters = {
             "nutri_scores": nutri_val or [],
             "cook_cats": cook_val or [],
@@ -244,9 +241,7 @@ def register_callbacks(app: dash.Dash):
         }
         return new_filters, nutri_val, cook_val, kcal_val
 
-    # -----------------------------------------------------------------------
-    # FILTRE : label dynamique du slider kcal
-    # -----------------------------------------------------------------------
+    # Mise à jour du label dynamique du slider
     @app.callback(
         Output("filter-kcal-label", "children"),
         Input("filter-kcal", "value"),
@@ -256,9 +251,7 @@ def register_callbacks(app: dash.Dash):
             return "Énergie : toutes"
         return f"Énergie : {kcal_val[0]} – {kcal_val[1]} kcal"
 
-    # -----------------------------------------------------------------------
-    # FILTRE : affichage des badges de filtres actifs
-    # -----------------------------------------------------------------------
+    # Affichage des badges de filtres actifs
     @app.callback(
         Output("active-filters-display", "children"),
         Input("store-filters", "data"),
@@ -268,51 +261,39 @@ def register_callbacks(app: dash.Dash):
             return []
 
         badges = []
-        nutri_colors = NUTRI_COLORS
 
+        # Badges Nutri-Score
         for score in filters.get("nutri_scores", []):
-            color = nutri_colors.get(score, PALETTE["muted"])
-            badges.append(html.Span(
-                f"Nutri-Score {score}",
-                style={
-                    "backgroundColor": color, "color": "white",
-                    "padding": "2px 8px", "borderRadius": "12px",
-                    "fontSize": "0.7rem", "fontWeight": "600", "marginRight": "4px",
-                },
-            ))
+            color = NUTRI_COLORS.get(score, PALETTE["muted"])
+            badges.append(html.Span(f"Nutri-Score {score}", style={
+                "backgroundColor": color, "color": "white", "padding": "2px 8px",
+                "borderRadius": "12px", "fontSize": "0.7rem", "fontWeight": "600", "marginRight": "4px",
+            }))
 
+        # Badges Cuisson
         cook_colors = {"rapide": PALETTE["accent2"], "moyen": PALETTE["accent4"], "long": PALETTE["accent3"]}
         cook_labels = {"rapide": "⚡ Rapide", "moyen": "⏱ Moyen", "long": "🕐 Long"}
         for cat in filters.get("cook_cats", []):
-            badges.append(html.Span(
-                cook_labels.get(cat, cat),
-                style={
-                    "backgroundColor": cook_colors.get(cat, PALETTE["muted"]),
-                    "color": "white", "padding": "2px 8px", "borderRadius": "12px",
-                    "fontSize": "0.7rem", "fontWeight": "600", "marginRight": "4px",
-                },
-            ))
+            badges.append(html.Span(cook_labels.get(cat, cat), style={
+                "backgroundColor": cook_colors.get(cat, PALETTE["muted"]), "color": "white",
+                "padding": "2px 8px", "borderRadius": "12px", "fontSize": "0.7rem",
+                "fontWeight": "600", "marginRight": "4px",
+            }))
 
-        kcal_min = filters.get("kcal_min", 0)
-        kcal_max = filters.get("kcal_max", 3500)
-        if kcal_min != 0 or kcal_max != 3500:
-            badges.append(html.Span(
-                f"⚡ {kcal_min}–{kcal_max} kcal",
-                style={
-                    "backgroundColor": PALETTE["accent1"], "color": "white",
-                    "padding": "2px 8px", "borderRadius": "12px",
-                    "fontSize": "0.7rem", "fontWeight": "600", "marginRight": "4px",
-                },
-            ))
+        # Badge Kcal
+        k_min, k_max = filters.get("kcal_min", 0), filters.get("kcal_max", 3500)
+        if k_min != 0 or k_max != 3500:
+            badges.append(html.Span(f"⚡ {k_min}–{k_max} kcal", style={
+                "backgroundColor": PALETTE["accent1"], "color": "white", "padding": "2px 8px",
+                "borderRadius": "12px", "fontSize": "0.7rem", "fontWeight": "600", "marginRight": "4px",
+            }))
 
         if not badges:
             return [html.Span("Aucun filtre actif", style={"fontSize": "0.7rem", "color": PALETTE["muted"], "fontStyle": "italic"})]
 
         return badges
 
-    # -----------------------------------------------------------------------
-    # GRAPHIQUES : tous réactifs au Store de filtres
-    # -----------------------------------------------------------------------
+    # Mise à jour de tous les graphiques
     @app.callback(
         Output("graph-kcal-hist", "figure"),
         Output("graph-nutri-pie", "figure"),
@@ -338,9 +319,7 @@ def register_callbacks(app: dash.Dash):
             tags_top_chart(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax),
         )
 
-    # -----------------------------------------------------------------------
-    # RECHERCHE
-    # -----------------------------------------------------------------------
+    # Moteur de recherche FTS
     @app.callback(
         Output("search-results", "children"),
         Input("btn-search", "n_clicks"),
@@ -353,65 +332,47 @@ def register_callbacks(app: dash.Dash):
             return ""
 
         try:
-            df_res = con.cursor().execute(
-                """
-                SELECT recipe_id,
-                       title,
-                       nutri_score,
-                       cook_time_category,
+            # Recherche Full-Text via BM25 (très performant sur DuckDB)
+            df_res = con.execute("""
+                SELECT recipe_id, title, nutri_score, cook_time_category,
                        fts_main_recipes_main.match_bm25(recipe_id, ?) AS score
                 FROM recipes_main
                 WHERE fts_main_recipes_main.match_bm25(recipe_id, ?) IS NOT NULL
                 ORDER BY score DESC LIMIT 8
-                """,
-                [query.strip(), query.strip()],
-            ).df()
+            """, [query.strip(), query.strip()]).df()
 
             if df_res.empty:
-                return html.Span(
-                    "Aucun résultat trouvé.",
-                    style={"color": PALETTE["muted"], "fontStyle": "italic"},
-                )
+                return html.Span("Aucun résultat trouvé.", style={"color": PALETTE["muted"], "fontStyle": "italic"})
 
             items = []
             for _, row in df_res.iterrows():
                 score_label = row.get("nutri_score") or "?"
                 badge_color = NUTRI_COLORS.get(score_label, PALETTE["muted"])
-                recipe_id = str(row.get("recipe_id", ""))
+
                 items.append(html.Div(
-                    id={"type": "search-result-item", "index": recipe_id},
+                    id={"type": "search-result-item", "index": str(row.get("recipe_id", ""))},
+                    className="search-result-row",
                     style={
                         "display": "flex", "alignItems": "center", "gap": "8px",
-                        "marginBottom": "4px", "cursor": "pointer",
-                        "padding": "4px 6px", "borderRadius": "6px",
-                        "transition": "background 0.15s",
+                        "marginBottom": "4px", "cursor": "pointer", "padding": "4px 6px",
+                        "borderRadius": "6px", "transition": "background 0.15s",
                     },
-                    className="search-result-row",
                     children=[
                         html.Span(score_label, style={
-                            "backgroundColor": badge_color, "color": "white",
-                            "padding": "1px 6px", "borderRadius": "8px",
-                            "fontSize": "0.68rem", "fontWeight": "bold", "flexShrink": "0",
+                            "backgroundColor": badge_color, "color": "white", "padding": "1px 6px",
+                            "borderRadius": "8px", "fontSize": "0.68rem", "fontWeight": "bold", "flexShrink": "0",
                         }),
-                        html.Span(row.get("title", "—"),
-                                  style={"color": PALETTE["text"], "flex": "1"}),
-                        html.Span(
-                            f"· {row.get('cook_time_category', '')}",
-                            style={"color": PALETTE["muted"], "fontSize": "0.72rem"},
-                        ),
-                        html.Span("›", style={
-                            "color": PALETTE["muted"], "fontSize": "0.9rem", "flexShrink": "0",
-                        }),
+                        html.Span(row.get("title", "—"), style={"color": PALETTE["text"], "flex": "1"}),
+                        html.Span(f"· {row.get('cook_time_category', '')}", style={"color": PALETTE["muted"], "fontSize": "0.72rem"}),
+                        html.Span("›", style={"color": PALETTE["muted"], "fontSize": "0.9rem", "flexShrink": "0"}),
                     ],
                 ))
             return items
 
         except Exception as e:
-            return html.Span(
-                f"Erreur recherche : {e}",
-                style={"color": PALETTE["accent3"], "fontStyle": "italic"},
-            )
+            return html.Span(f"Erreur recherche : {e}", style={"color": PALETTE["accent3"], "fontStyle": "italic"})
 
+    # Sauvegarde de la recette sélectionnée
     @app.callback(
         Output("store-selected-recipe-id", "data"),
         Input({"type": "search-result-item", "index": dash.ALL}, "n_clicks"),
@@ -421,16 +382,16 @@ def register_callbacks(app: dash.Dash):
     def store_clicked_recipe(n_clicks_list, ids):
         if not n_clicks_list or not any(n_clicks_list):
             return dash.no_update
+
         ctx_cb = dash.callback_context
         if not ctx_cb.triggered:
             return dash.no_update
+
         triggered_id = ctx_cb.triggered[0]["prop_id"]
         id_dict = json.loads(triggered_id.replace(".n_clicks", ""))
         return id_dict.get("index")
 
-    # -----------------------------------------------------------------------
-    # Callback 1 : texte immédiat + placeholder image + stocke les URLs brutes
-    # -----------------------------------------------------------------------
+    # Affichage principal (Texte immédiat + payload Image)
     @app.callback(
         Output("recipe-image-container", "children"),
         Output("recipe-title", "children"),
@@ -445,49 +406,24 @@ def register_callbacks(app: dash.Dash):
         prevent_initial_call=False,
     )
     def update_recipe_panel(n_clicks, n_intervals, selected_recipe_id):
-        ctx_cb = dash.callback_context
-        triggered = ctx_cb.triggered[0]["prop_id"] if ctx_cb.triggered else ""
+        triggered_id = dash.ctx.triggered_id or ""
 
-        if "store-selected-recipe-id" in triggered and selected_recipe_id:
+        # Si l'utilisateur a cliqué sur un résultat de recherche
+        if triggered_id == "store-selected-recipe-id" and selected_recipe_id:
             df = _fetch_recipe_by_id(str(selected_recipe_id))
             if not df.empty:
-                row = df.iloc[0]
-                title, idx, short, content, ings = _build_recipe_text_outputs(row)
-                urls_payload = {
-                    "image_url": row.get("image_url") or "",
-                    "image_urls": (
-                        row.get("image_urls").tolist()
-                        if isinstance(row.get("image_urls"), np.ndarray)
-                        else (row.get("image_urls") or [])
-                    ),
-                }
-                return _placeholder_image(), title, idx, short, content, ings, urls_payload
+                return _extract_recipe_payload(df)
 
-        random_id_df = con.cursor().execute("""
-            SELECT recipe_id FROM recipes_main WHERE has_image = true USING SAMPLE 1
-        """).df()
+        # Sinon (initialisation ou bouton aléatoire), on prend une recette au hasard avec image
+        random_id_df = con.execute("SELECT recipe_id FROM recipes_main WHERE has_image = true USING SAMPLE 1").df()
 
         if random_id_df.empty:
             return html.Div("Pas d'image"), "Pas de recette", 0, "", "", "", {}
 
-        rid = random_id_df.iloc[0]["recipe_id"]
-        df_recipe = _fetch_recipe_by_id(rid)
-        row = df_recipe.iloc[0]
+        df_recipe = _fetch_recipe_by_id(random_id_df.iloc[0]["recipe_id"])
+        return _extract_recipe_payload(df_recipe)
 
-        title, idx, short, content, ings = _build_recipe_text_outputs(row)
-        urls_payload = {
-            "image_url": row.get("image_url") or "",
-            "image_urls": (
-                row.get("image_urls").tolist()
-                if isinstance(row.get("image_urls"), np.ndarray)
-                else (row.get("image_urls") or [])
-            ),
-        }
-        return _placeholder_image(), title, idx, short, content, ings, urls_payload
-
-    # -----------------------------------------------------------------------
-    # Callback 2 : résolution de l'image en arrière-plan
-    # -----------------------------------------------------------------------
+    # Résolution asynchrone de l'image
     @app.callback(
         Output("recipe-image-container", "children", allow_duplicate=True),
         Input("store-recipe-image-urls", "data"),
@@ -504,19 +440,17 @@ def register_callbacks(app: dash.Dash):
 
         if img_url:
             return html.Div(
-                html.Img(src=img_url, style={
-                    "display": "block", "width": "100%", "height": "100%", "objectFit": "cover",
-                }),
+                html.Img(src=img_url, style={"display": "block", "width": "100%", "height": "100%", "objectFit": "cover"}),
                 id="recipe-image-inner",
                 style={"width": "100%", "height": "100%"},
             )
-        else:
-            return html.Div(
-                html.Div("📷 Pas d'image disponible", style={
-                    "height": "100%", "width": "100%",
-                    "display": "flex", "alignItems": "center", "justifyContent": "center",
-                    "backgroundColor": PALETTE["bg"], "color": PALETTE["muted"], "fontSize": "0.9rem",
-                }),
-                id="recipe-image-inner",
-                style={"width": "100%", "height": "100%"},
-            )
+
+        return html.Div(
+            html.Div("📷 Pas d'image disponible", style={
+                "height": "100%", "width": "100%", "display": "flex",
+                "alignItems": "center", "justifyContent": "center",
+                "backgroundColor": PALETTE["bg"], "color": PALETTE["muted"], "fontSize": "0.9rem",
+            }),
+            id="recipe-image-inner",
+            style={"width": "100%", "height": "100%"},
+        )

@@ -8,18 +8,16 @@ import duckdb
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "..", "..", "data", "../data/recipes_catalog.duckdb")
 
+# Connexion globale en lecture seule
 con = duckdb.connect(DB_PATH, read_only=True)
-print("✅ DuckDB connecté à la base persistante")
+print("DuckDB connecté à la base persistante")
 
 _main_cols = {row[0] for row in con.execute("DESCRIBE recipes_main").fetchall()}
 _image_urls_select = (
     "m.image_urls" if "image_urls" in _main_cols else "NULL::VARCHAR[] AS image_urls"
 )
 
-# ---------------------------------------------------------------------------
-# Statistiques globales
-# ---------------------------------------------------------------------------
-
+# Statistiques globales extraites en une seule requête optimisée
 _stats = con.cursor().execute("""
     SELECT
         COUNT(*)                                                             AS total,
@@ -59,10 +57,7 @@ try:
 except Exception:
     AVG_STEPS = 0
 
-# ---------------------------------------------------------------------------
 # Pré-calcul des IDs de recettes avec image
-# ---------------------------------------------------------------------------
-
 random_id_df = con.cursor().execute("""
     SELECT recipe_id 
     FROM recipes_main 
@@ -72,23 +67,9 @@ random_id_df = con.cursor().execute("""
 
 rid = random_id_df.iloc[0]["recipe_id"] if not random_id_df.empty else None
 
-# ---------------------------------------------------------------------------
-# Colonnes minimales pour l'affichage d'une recette
-# ---------------------------------------------------------------------------
-
+# Colonnes requises pour le layout de la recette
 RECIPE_COLS = """
-    m.recipe_id,
-    m.title,
-    m.instructions_text,
-    m.ingredients_validated,
-    m.cook_minutes,
-    m.image_url,
-    m.image_urls,
-    m.energy_kcal,
-    m.nutri_score,
-    n.fat_g,
-    n.protein_g,
-    n.sugars_g,
-    n.salt_g,
-    n.saturates_g
+    m.recipe_id, m.title, m.instructions_text, m.ingredients_validated,
+    m.cook_minutes, m.image_url, m.image_urls, m.energy_kcal, m.nutri_score,
+    n.fat_g, n.protein_g, n.sugars_g, n.salt_g, n.saturates_g
 """
