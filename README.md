@@ -42,6 +42,8 @@ Un projet Data Full-Stack qui ingère, nettoie, enrichit, indexe et visualise pl
 ├── dashboard/
 │   ├── main.py                 # Point d'entrée de l'application Dash
 │   ├──ingestion.py             # Script faisant le pont entre Delta Lake et DuckDB
+│   ├── assets/
+│   │   └── styles.css          # Feuille de style des dashboards
 │   └── app/
 │       ├── layout.py               # Définition de la structure HTML et du CSS (Layout Dash)
 │       ├── callbacks.py            # Logique applicative : interactivité, filtres, recherche

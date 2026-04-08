@@ -1,0 +1,431 @@
+/* ==========================================================================
+   assets/style.css
+   ========================================================================== */
+
+/* --- Import des polices Google --- */
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Lora:ital,wght@0,400;0,500;1,400&display=swap');
+
+/* --- Variables de Palette --- */
+:root {
+    --bg: #FAFAF7;
+    --card: #FFFFFF;
+    --border: #E8E4DC;
+    --text: #2C2825;
+    --muted: #8A8480;
+    --accent1: #E07B39;
+    --accent2: #3D7A5F;
+    --accent3: #C94F4F;
+    --accent4: #4A6FA5;
+    --accent5: #9B7EBD;
+}
+
+/* ==========================================================================
+   Layout Principal & Base
+   ========================================================================== */
+.main-layout {
+    background-color: var(--bg);
+    min-height: 100vh;
+    font-family: 'Lora', Georgia, serif;
+    color: var(--text);
+    padding: 20px;
+}
+
+.card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+
+.card-p-22 { padding: 22px; }
+.card-p-0 { padding: 0; }
+.card-col {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    box-sizing: border-box;
+}
+.card-hidden { overflow: hidden; }
+
+/* ==========================================================================
+   Grilles
+   ========================================================================== */
+.grid-row-1 {
+    display: grid;
+    grid-template-columns: 1fr 1.4fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+    align-items: stretch;
+    min-height: 360px;
+}
+
+.grid-row-2 {
+    display: grid;
+    grid-template-columns: 3fr 1fr;
+    gap: 16px;
+    margin-bottom: 16px;
+    align-items: stretch;
+}
+
+.grid-row-3 {
+    display: grid;
+    grid-template-columns: 3fr 1.5fr;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.grid-row-4,
+.grid-row-5 {
+    display: grid;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.grid-row-4 { grid-template-columns: 1fr 2fr; }
+.grid-row-5 { grid-template-columns: 1fr 1fr; }
+
+/* ==========================================================================
+   Panneau de Filtres
+   ========================================================================== */
+.filter-panel {
+    margin-bottom: 16px;
+    padding: 14px 20px;
+}
+
+.filter-container {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    flex-wrap: wrap;
+}
+
+.filter-header { white-space: nowrap; }
+.filter-icon { font-size: 1rem; margin-right: 6px; }
+
+.filter-title {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: var(--text);
+}
+
+.filter-label {
+    font-size: 0.7rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    display: block;
+    margin-bottom: 4px;
+}
+
+.filter-slider {
+    min-width: 220px;
+    flex: 1;
+}
+
+.checklist-input { margin-right: 3px; }
+
+.checklist-label {
+    margin-right: 8px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    color: var(--text);
+}
+.checklist-label-normal { font-weight: normal; }
+
+.btn-reset {
+    background-color: transparent;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 12px;
+    cursor: pointer;
+    font-size: 0.75rem;
+    color: var(--muted);
+    font-family: 'Lora', Georgia, serif;
+    white-space: nowrap;
+    transition: all 0.2s;
+    margin-left: auto;
+}
+
+.active-filters {
+    margin-top: 8px;
+    min-height: 20px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.filter-badge {
+    color: white;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    cursor: pointer;
+    margin-right: 4px;
+}
+.filter-badge-close {
+    margin-left: 4px;
+    opacity: 0.7;
+}
+
+/* ==========================================================================
+   Composants : Titres & Recherche
+   ========================================================================== */
+.main-title {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 1.85rem;
+    font-weight: 700;
+    line-height: 1.25;
+    margin: 0 0 14px 0;
+    white-space: pre-line;
+}
+
+.main-subtitle {
+    font-size: 0.82rem;
+    color: var(--muted);
+    line-height: 1.6;
+    margin: 0;
+    flex: 1;
+}
+
+.search-container {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-top: auto;
+    padding-top: 16px;
+}
+
+.search-input {
+    flex: 1;
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 0.75rem;
+    font-family: 'Lora', Georgia, serif;
+    background-color: var(--bg);
+    color: var(--text);
+    outline: none;
+    box-shadow: inset 0 1px 3px rgba(0,0,0,0.06);
+    height: 30px;
+    box-sizing: border-box;
+}
+
+.search-results {
+    font-size: 0.78rem;
+    color: var(--text);
+    max-height: 160px;
+    overflow-y: auto;
+    line-height: 1.7;
+}
+
+.btn-primary {
+    background-color: var(--accent1);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 12px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 0.75rem;
+    font-family: 'Lora', Georgia, serif;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    white-space: nowrap;
+    transition: background 0.2s;
+    height: 30px;
+    box-sizing: border-box;
+}
+.btn-random { flex-shrink: 0; height: auto; }
+
+/* ==========================================================================
+   Composants : Image & KPIs
+   ========================================================================== */
+.recipe-image-container {
+    width: 100%;
+    flex: 1;
+    overflow: hidden;
+    background-color: var(--bg);
+    max-height: 400px;
+}
+
+.recipe-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.recipe-title {
+    margin: 0;
+    font-weight: 600;
+    font-size: 0.95rem;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    flex: 1;
+    padding-right: 12px;
+    font-family: 'Playfair Display', Georgia, serif;
+}
+
+.kpi-title {
+    font-size: 0.78rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 12px;
+}
+
+.kpi-main-value {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 2.6rem;
+    font-weight: 700;
+    margin: 0;
+    color: var(--accent1);
+}
+
+.kpi-hr {
+    border: none;
+    border-top: 2px solid var(--border);
+    margin: 18px 0;
+}
+
+.kpi-row { margin-top: 6px; }
+.kpi-val-lg { font-size: 1.1rem; font-weight: 600; }
+.kpi-val-a2 { color: var(--accent2); }
+.kpi-val-a3 { color: var(--accent3); }
+.kpi-val-a4 { color: var(--accent4); }
+.kpi-sub { font-size: 0.78rem; color: var(--muted); margin-left: 4px; }
+
+/* ==========================================================================
+   Instructions & Ingrédients
+   ========================================================================== */
+.instructions-grid {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 24px;
+    height: 100%;
+}
+
+.section-h3 {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 0.95rem;
+    font-weight: 600;
+}
+
+.section-h3-mb4 { margin-bottom: 4px; }
+.section-h3-mb12 { margin-bottom: 12px; }
+.section-meta { font-size: 0.72rem; color: var(--muted); font-style: italic; }
+.section-meta-mb12 { margin-bottom: 12px; }
+.section-meta-mt8 { margin-top: -8px; margin-bottom: 10px; }
+
+.instructions-short {
+    font-size: 0.8rem;
+    color: var(--muted);
+    line-height: 1.7;
+    white-space: nowrap;
+}
+
+.instructions-content {
+    column-count: 2;
+    column-gap: 24px;
+    column-rule: 1px solid var(--border);
+    border-left: 1px solid var(--border);
+    padding-left: 24px;
+    font-size: 0.8rem;
+    line-height: 1.75;
+    color: var(--text);
+}
+
+.ingredients-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    font-size: 0.8rem;
+    line-height: 2;
+}
+
+/* ==========================================================================
+   Bannière Statistiques & Graphiques
+   ========================================================================== */
+.stats-banner {
+    background: linear-gradient(135deg, #E07B3918 0%, #4A6FA512 50%, #3D7A5F18 100%);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 24px;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 0;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+
+.stats-col-right-border,
+.stats-col-left-border {
+    text-align: center;
+    flex: 1;
+}
+
+.stats-col-right-border {
+    border-right: 1px solid var(--border);
+    padding-right: 16px;
+    margin-right: 16px;
+}
+
+.stats-col-left-border {
+    border-left: 1px solid var(--border);
+    padding-left: 16px;
+    margin-left: 16px;
+}
+
+.stats-col-center {
+    flex: 2;
+    text-align: center;
+    padding: 0 16px;
+}
+
+.stats-val {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 1.5rem;
+    font-weight: 700;
+    line-height: 1.1;
+}
+.stats-val-a1 { color: var(--accent1); }
+.stats-val-a2 { color: var(--accent2); }
+.stats-val-a4 { color: var(--accent4); }
+
+.stats-label {
+    font-size: 0.68rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-top: 3px;
+}
+
+.stats-icon { font-size: 1.2rem; margin-bottom: 2px; }
+
+.stats-h3 {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: 1.05rem;
+    font-weight: 700;
+    margin: 0 0 2px 0;
+    color: var(--text);
+    white-space: nowrap;
+}
+
+.stats-p {
+    font-size: 0.68rem;
+    color: var(--muted);
+    margin: 0;
+    font-style: italic;
+    letter-spacing: 0.04em;
+}
+
+.graph-220 { height: 220px; }
+.graph-280 { height: 280px; }
+.graph-320 { height: 320px; }
+.pie-text { text-align: center; font-size: 0.72rem; color: var(--muted); margin: 0; }
