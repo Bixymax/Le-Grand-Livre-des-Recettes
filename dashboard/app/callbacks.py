@@ -236,26 +236,33 @@ def register_callbacks(app: dash.Dash):
 
         # Cross-filtering : clic sur une barre de l'histogramme kcal
         if triggered_id == "graph-kcal-hist" and kcal_hist_click:
-            x0 = kcal_hist_click["points"][0].get("x0")
-            x1 = kcal_hist_click["points"][0].get("x1")
+            point = kcal_hist_click["points"][0]
 
-            if x0 is not None and x1 is not None:
-                # Arrondi propre aux entiers
-                bin_min = int(round(min(x0, x1)))
-                bin_max = int(round(max(x0, x1)))
+            # Plotly expose x0/x1 pour les histogrammes, mais parfois seulement x
+            x0 = point.get("x0")
+            x1 = point.get("x1")
 
-                # Bascule : re-cliquer sur la même barre réinitialise le filtre
-                cur_min = (current_filters or {}).get("kcal_min", 0)
-                cur_max = (current_filters or {}).get("kcal_max", 3500)
+            if x0 is None or x1 is None:
+                # Fallback : x est le centre de la barre — on reconstitue la plage
+                # en snappant au step=50 du slider
+                x_center = point.get("x", 0)
+                x0 = (int(x_center) // 50) * 50
+                x1 = x0 + 50
 
-                if cur_min == bin_min and cur_max == bin_max:
-                    new_min, new_max = 0, 3500  # désélection
-                else:
-                    new_min, new_max = bin_min, bin_max
+            bin_min = max(0,    int(round(min(x0, x1) / 50) * 50))
+            bin_max = min(3500, int(round(max(x0, x1) / 50) * 50))
 
-                new_filters = {**(current_filters or {}), "kcal_min": new_min, "kcal_max": new_max}
-                new_kcal_val = [new_min, new_max]
-                return new_filters, nutri_val, cook_val, new_kcal_val
+            # Toggle : re-cliquer la même barre réinitialise
+            cur_min = (current_filters or {}).get("kcal_min", 0)
+            cur_max = (current_filters or {}).get("kcal_max", 3500)
+
+            if cur_min == bin_min and cur_max == bin_max:
+                new_min, new_max = 0, 3500
+            else:
+                new_min, new_max = bin_min, bin_max
+
+            new_filters = {**(current_filters or {}), "kcal_min": new_min, "kcal_max": new_max}
+            return new_filters, nutri_val, cook_val, [new_min, new_max]
 
         # Modification manuelle depuis les composants UI
         new_filters = {
