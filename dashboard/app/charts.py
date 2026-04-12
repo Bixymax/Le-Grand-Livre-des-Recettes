@@ -60,7 +60,7 @@ def kcal_histogram(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=No
         **PLOT_LAYOUT,
         title=dict(text=f"Distribution énergie (kcal) — {len(df):,} recettes".replace(",", "\u202f"), x=0.5,
                    font_size=13),
-        xaxis_title="kcal", yaxis_title="recettes",
+        xaxis_title="kcal", yaxis_title="recettes", clickmode="event+select",
     )
     fig.update_xaxes(showgrid=False, zeroline=False, tickfont_size=10)
     fig.update_yaxes(showgrid=True, gridcolor=PALETTE["border"], zeroline=False, tickfont_size=10)

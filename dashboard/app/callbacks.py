@@ -198,11 +198,13 @@ def register_callbacks(app: dash.Dash):
         Input("filter-kcal", "value"),
         Input("graph-nutri-bar", "clickData"),
         Input("graph-cook-times", "clickData"),
+        Input("graph-kcal-hist", "clickData"),
         Input("btn-reset-filters", "n_clicks"),
         State("store-filters", "data"),
         prevent_initial_call=False,
     )
-    def update_filter_store(nutri_val, cook_val, kcal_val, nutri_click, cook_click, reset_clicks, current_filters):
+    def update_filter_store(nutri_val, cook_val, kcal_val, nutri_click, cook_click,
+                            kcal_hist_click, reset_clicks, current_filters):
         triggered_id = dash.ctx.triggered_id or ""
 
         if triggered_id == "btn-reset-filters":
@@ -231,6 +233,29 @@ def register_callbacks(app: dash.Dash):
 
             new_filters = {**(current_filters or {}), "cook_cats": current_cook}
             return new_filters, nutri_val, current_cook, kcal_val
+
+        # Cross-filtering : clic sur une barre de l'histogramme kcal
+        if triggered_id == "graph-kcal-hist" and kcal_hist_click:
+            x0 = kcal_hist_click["points"][0].get("x0")
+            x1 = kcal_hist_click["points"][0].get("x1")
+
+            if x0 is not None and x1 is not None:
+                # Arrondi propre aux entiers
+                bin_min = int(round(min(x0, x1)))
+                bin_max = int(round(max(x0, x1)))
+
+                # Bascule : re-cliquer sur la même barre réinitialise le filtre
+                cur_min = (current_filters or {}).get("kcal_min", 0)
+                cur_max = (current_filters or {}).get("kcal_max", 3500)
+
+                if cur_min == bin_min and cur_max == bin_max:
+                    new_min, new_max = 0, 3500  # désélection
+                else:
+                    new_min, new_max = bin_min, bin_max
+
+                new_filters = {**(current_filters or {}), "kcal_min": new_min, "kcal_max": new_max}
+                new_kcal_val = [new_min, new_max]
+                return new_filters, nutri_val, cook_val, new_kcal_val
 
         # Modification manuelle depuis les composants UI
         new_filters = {
