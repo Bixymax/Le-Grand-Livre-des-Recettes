@@ -1,7 +1,23 @@
-.venv
-data
-.idea
-.git
-.env.spark
-spark-logs
-dashboard/recipes_database.duckdb
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+dist/
+build/
+
+# dlt — NE PAS committer les secrets
+.dlt/secrets.toml
+
+# Données brutes et outputs (trop lourds pour Git)
+data/raw/
+data/outputs/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
