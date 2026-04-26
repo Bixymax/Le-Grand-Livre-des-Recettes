@@ -82,7 +82,7 @@ def ingest(
     ]
 
     with console.status("Extraction + chargement en cours..."):
-        load_info = pipeline.run(sources)
+        load_info = pipeline.run(sources, loader_file_format="parquet")
 
     console.print(load_info)
     console.print("[green]✅ Ingestion terminée[/green]")

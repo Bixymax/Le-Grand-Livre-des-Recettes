@@ -44,16 +44,14 @@ def kaggle_raw(data_dir: str) -> Iterator[dict]:
 
     with open(path, encoding="utf-8", newline="") as f:
         reader = csv.DictReader(f)
-        seen_titles: set[str] = set()  # dropDuplicates sur title_norm
 
         for row in reader:
             title: str = row.get("name", "")
             title_norm: str = _normalize_title(title)
 
-            # Dédoublonnage — équivalent du dropDuplicates(["title_norm"]) Spark
-            if title_norm in seen_titles or not title_norm:
+            # La déduplication est déjà gérée en SQL
+            if not title_norm:
                 continue
-            seen_titles.add(title_norm)
 
             tags: list[str] = _parse_python_list(row.get("tags", ""))
             nutrition_raw: list[float] = _parse_nutrition(row.get("nutrition", ""))

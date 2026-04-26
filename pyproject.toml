@@ -15,6 +15,7 @@ dependencies = [
     "deltalake>=0.22.0",
     # Data processing
     "duckdb>=1.1.0",
+    "ijson>=3.2.0",
     "pandas>=2.2.0",
     "pyarrow>=17.0.0",
     # Validation

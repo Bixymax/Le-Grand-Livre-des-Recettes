@@ -41,6 +41,7 @@ def mit_recipes_source(
 
 @dlt.resource(
     name="raw_layer1",
+    parallelized=True,
     write_disposition="replace",  # full reload — sera "append" en streaming
     columns={
         "id": {"data_type": "text", "nullable": False},
