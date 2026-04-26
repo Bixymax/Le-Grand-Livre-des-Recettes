@@ -7,6 +7,7 @@ La normalisation est faite ici, en Python pur, avant le yield.
 """
 
 import csv
+import ast
 import re
 from pathlib import Path
 from typing import Iterator
@@ -79,7 +80,7 @@ _LIST_CHARS_RE = re.compile(r"[\[\]']")
 _BRACKETS_RE = re.compile(r"[\[\]]")
 
 def _normalize_title(title: str) -> str:
-    """
+    r"""
     Reproduit exactement :
       F.lower(F.trim(F.regexp_replace("title", r"[^a-zA-Z0-9\s]", "")))
     pour garantir la compatibilité de la clé de jointure.
@@ -92,19 +93,25 @@ def _parse_python_list(raw: str) -> list[str]:
     Convertit une chaîne type "['tag1', 'tag2']" en list[str].
     Reproduit le regexp_replace + split du pipeline Spark.
     """
-    cleaned = _LIST_CHARS_RE.sub("", raw)
-    return [t.strip() for t in cleaned.split(",") if t.strip()]
+    try:
+        return [str(x).strip() for x in ast.literal_eval(raw)]
+    except Exception:
+        return []
 
 
 def _parse_nutrition(raw: str) -> list[float]:
     """Extrait les valeurs numériques depuis "[kcal, fat, sugar, ...]"."""
-    cleaned = _BRACKETS_RE.sub("", raw)
-    result: list[float] = []
-    for val in cleaned.split(","):
+    if not raw or raw == "[]":
+        return []
+
+    result = []
+    # .strip() et .split() sont des méthodes natives très rapides
+    for item in raw.strip("[]").split(","):
         try:
-            result.append(float(val.strip()))
+            result.append(float(item))  # float() s'occupe de virer les espaces
         except ValueError:
             pass
+
     return result
 
 

@@ -11,17 +11,17 @@ Fichiers attendus dans data_dir :
   - recipes_with_nutritional_info.json  (macronutriments MIT)
 """
 
-import ijson
 from pathlib import Path
 from typing import Iterator
 
 import dlt
+import ijson.backends.yajl2_c as ijson
 from dlt.sources import DltResource
 
 
 @dlt.source(name="mit_recipes")
 def mit_recipes_source(
-    data_dir: str = dlt.config.value,
+        data_dir: str = dlt.config.value,
 ) -> tuple[DltResource, ...]:
     """
     Groupe les 4 ressources MIT en une seule source cohérente.
@@ -41,12 +41,12 @@ def mit_recipes_source(
 
 @dlt.resource(
     name="raw_layer1",
-    write_disposition="replace",   # full reload — sera "append" en streaming
+    write_disposition="replace",  # full reload — sera "append" en streaming
     columns={
-        "id":           {"data_type": "text", "nullable": False},
-        "title":        {"data_type": "text"},
-        "url":          {"data_type": "text"},
-        "partition":    {"data_type": "text"},
+        "id": {"data_type": "text", "nullable": False},
+        "title": {"data_type": "text"},
+        "url": {"data_type": "text"},
+        "partition": {"data_type": "text"},
     },
 )
 def layer1(data_dir: str) -> Iterator[dict]:
@@ -72,12 +72,12 @@ def layer1(data_dir: str) -> Iterator[dict]:
             ]
 
             yield {
-                "id":                record["id"],
-                "title":             record.get("title", ""),
-                "url":               record.get("url"),
-                "partition":         record.get("partition"),
-                "ingredients_raw":   ingredients_raw,
-                "n_steps":           len(instructions_parts),
+                "id": record["id"],
+                "title": record.get("title", ""),
+                "url": record.get("url"),
+                "partition": record.get("partition"),
+                "ingredients_raw": ingredients_raw,
+                "n_steps": len(instructions_parts),
                 "instructions_text": " | ".join(filter(None, instructions_parts)),
             }
 
@@ -101,10 +101,10 @@ def layer2(data_dir: str) -> Iterator[dict]:
             ]
 
             yield {
-                "id":         record["id"],
+                "id": record["id"],
                 "image_urls": image_urls,
-                "image_url":  image_urls[0] if image_urls else None,
-                "has_image":  len(image_urls) > 0,
+                "image_url": image_urls[0] if image_urls else None,
+                "has_image": len(image_urls) > 0,
             }
 
 
@@ -133,9 +133,9 @@ def det_ingrs(data_dir: str) -> Iterator[dict]:
             ]
 
             yield {
-                "id":                       record["id"],
-                "ingredients_validated":    validated,
-                "n_ingredients_validated":  len(validated),
+                "id": record["id"],
+                "ingredients_validated": validated,
+                "n_ingredients_validated": len(validated),
             }
 
 
@@ -153,13 +153,13 @@ def nutrition(data_dir: str) -> Iterator[dict]:
     with open(path, "rb") as f:
         for record in ijson.items(f, 'item'):
             yield {
-                "title":      record.get("title", ""),
-                "energy":     _safe_float(record.get("energy")),
-                "fat":        _safe_float(record.get("fat")),
-                "protein":    _safe_float(record.get("protein")),
-                "salt":       _safe_float(record.get("salt")),
-                "saturates":  _safe_float(record.get("saturates")),
-                "sugars":     _safe_float(record.get("sugars")),
+                "title": record.get("title", ""),
+                "energy": _safe_float(record.get("energy")),
+                "fat": _safe_float(record.get("fat")),
+                "protein": _safe_float(record.get("protein")),
+                "salt": _safe_float(record.get("salt")),
+                "saturates": _safe_float(record.get("saturates")),
+                "sugars": _safe_float(record.get("sugars")),
             }
 
 

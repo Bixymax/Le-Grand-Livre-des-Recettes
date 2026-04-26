@@ -104,7 +104,7 @@ python run_pipeline.py info
 
 ```bash
 pytest tests/ -v
-pytest tests/ --cov=pipeline --cov-report=term-missing
+pytest tests/ --cov=src/le_grand_livre_des_recettes/pipeline --cov-report=term-missin
 ```
 
 Les tests unitaires (`test_transformers.py`, `test_sources.py`) ne nécessitent
