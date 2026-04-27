@@ -103,10 +103,19 @@ def transform() -> None:
         raise typer.Exit(1)
 
     with duckdb.connect(str(DB_PATH)) as con:
+        temp_dir = OUTPUTS_DIR / "tmp"
+        temp_dir.mkdir(exist_ok=True)
+        
+        # .as_posix() force les forward slashes (ex: "data/outputs/tmp")
+        con.execute(f"SET temp_directory='{temp_dir.as_posix()}'")
+
         for sql_file in sql_files:
             console.print(f"  → Exécution de [cyan]{sql_file.name}[/cyan]")
             t0 = time.perf_counter()
-            con.execute(sql_file.read_text(encoding="utf-8"))
+            sql_text = sql_file.read_text(encoding="utf-8")
+            statements = [s.strip() for s in sql_text.split(";") if s.strip()]
+            for stmt in statements:
+                con.execute(stmt)
             elapsed = time.perf_counter() - t0
             console.print(f"    [dim]terminé en {elapsed:.1f}s[/dim]")
 

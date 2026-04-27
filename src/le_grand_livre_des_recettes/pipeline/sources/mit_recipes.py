@@ -127,10 +127,12 @@ def det_ingrs(data_dir: str) -> Iterator[dict]:
         for record in ijson.items(f, 'item'):
             # Reconstruction de la logique arrays_zip + filter sans Spark
             ingredients: list[dict] = record.get("ingredients", [])
+            valid_flags: list[bool] = record.get("valid", [])
+
             validated: list[str] = [
                 ing.get("text", "").lower().strip()
-                for ing in ingredients
-                if ing.get("valid") is True and ing.get("text")
+                for ing, is_valid in zip(ingredients, valid_flags)
+                if is_valid and ing.get("text")
             ]
 
             yield {
@@ -153,14 +155,15 @@ def nutrition(data_dir: str) -> Iterator[dict]:
 
     with open(path, "rb") as f:
         for record in ijson.items(f, 'item'):
+            nutr = record.get("nutr_values_per100g", {})
             yield {
                 "title": record.get("title", ""),
-                "energy": _safe_float(record.get("energy")),
-                "fat": _safe_float(record.get("fat")),
-                "protein": _safe_float(record.get("protein")),
-                "salt": _safe_float(record.get("salt")),
-                "saturates": _safe_float(record.get("saturates")),
-                "sugars": _safe_float(record.get("sugars")),
+                "energy": _safe_float(nutr.get("energy")),
+                "fat": _safe_float(nutr.get("fat")),
+                "protein": _safe_float(nutr.get("protein")),
+                "salt": _safe_float(nutr.get("salt")),
+                "saturates": _safe_float(nutr.get("saturates")),
+                "sugars": _safe_float(nutr.get("sugars")),
             }
 
 
