@@ -1,0 +1,26 @@
+[
+  {
+    "id": "abc111",
+    "title": "chocolate cake",
+    "url": "http://allrecipes.com/chocolate-cake",
+    "partition": "train",
+    "ingredients": [{"text": "2 cups flour"}, {"text": "1 cup sugar"}, {"text": "3 eggs"}],
+    "instructions": [{"text": "Preheat oven to 350F."}, {"text": "Mix dry and wet ingredients."}, {"text": "Bake 30 min."}]
+  },
+  {
+    "id": "bcd222",
+    "title": "pasta bolognese",
+    "url": "http://epicurious.com/pasta",
+    "partition": "train",
+    "ingredients": [{"text": "500g pasta"}, {"text": "ground beef"}, {"text": "canned tomatoes"}],
+    "instructions": [{"text": "Cook pasta al dente."}, {"text": "Brown the beef."}, {"text": "Combine and simmer."}]
+  },
+  {
+    "id": "cde333",
+    "title": "apple pie",
+    "url": "http://foodnetwork.com/apple-pie",
+    "partition": "test",
+    "ingredients": [{"text": "apples"}, {"text": "pie crust"}, {"text": "cinnamon"}],
+    "instructions": [{"text": "Make the crust."}, {"text": "Fill with apples and cinnamon."}, {"text": "Bake 45 min."}]
+  }
+]

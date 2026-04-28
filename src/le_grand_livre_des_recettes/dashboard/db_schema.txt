@@ -1,0 +1,62 @@
+=== STRUCTURE DE LA BASE DUCKDB ===
+
+--- BASE TABLE: recipes_main ---
+Nombre de lignes : 1 029 720
+Colonnes :
+  - recipe_id (VARCHAR)
+  - title (VARCHAR)
+  - description (VARCHAR)
+  - instructions_text (VARCHAR)
+  - ingredients_raw (VARCHAR[])
+  - ingredients_validated (VARCHAR[])
+  - n_ingredients_validated (INTEGER)
+  - n_steps (INTEGER)
+  - cook_minutes (INTEGER)
+  - cook_time_category (VARCHAR)
+  - image_url (VARCHAR)
+  - image_urls (VARCHAR[])
+  - has_image (BOOLEAN)
+  - source_url (VARCHAR)
+  - energy_kcal (FLOAT)
+  - nutri_score (VARCHAR)
+  - tags (VARCHAR[])
+
+
+--- BASE TABLE: recipes_nutrition ---
+Nombre de lignes : 1 029 720
+Colonnes :
+  - recipe_id (VARCHAR)
+  - fat_g (FLOAT)
+  - protein_g (FLOAT)
+  - salt_g (FLOAT)
+  - saturates_g (FLOAT)
+  - sugars_g (FLOAT)
+
+
+--- VIEW: recipes ---
+Nombre de lignes : 1 029 720
+Colonnes :
+  - recipe_id (VARCHAR)
+  - title (VARCHAR)
+  - description (VARCHAR)
+  - instructions_text (VARCHAR)
+  - ingredients_raw (VARCHAR[])
+  - ingredients_validated (VARCHAR[])
+  - n_ingredients_validated (INTEGER)
+  - n_steps (INTEGER)
+  - cook_minutes (INTEGER)
+  - cook_time_category (VARCHAR)
+  - image_url (VARCHAR)
+  - image_urls (VARCHAR[])
+  - has_image (BOOLEAN)
+  - source_url (VARCHAR)
+  - energy_kcal (FLOAT)
+  - nutri_score (VARCHAR)
+  - tags (VARCHAR[])
+  - image_urls_1 (VARCHAR[])
+  - fat_g (FLOAT)
+  - protein_g (FLOAT)
+  - salt_g (FLOAT)
+  - sugars_g (FLOAT)
+  - saturates_g (FLOAT)
+

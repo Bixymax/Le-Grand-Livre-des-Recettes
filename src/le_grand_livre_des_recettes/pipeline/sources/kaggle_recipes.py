@@ -4,6 +4,12 @@ Source dlt pour le dataset Food.com / Kaggle (RAW_recipes.csv).
 Ce fichier CSV contient des colonnes `tags` et `nutrition` stockées
 comme des chaînes de caractères Python (ex: "['tag1', 'tag2']").
 La normalisation est faite ici, en Python pur, avant le yield.
+
+ATTENTION unité énergie :
+  `kaggle_energy_kcal` est en kcal/PORTION (premier élément du champ
+  `nutrition` de Food.com), pas en kcal/100g.
+  Elle ne doit PAS être utilisée pour le Nutri-Score — c'est uniquement
+  une valeur déclarative utile à l'affichage et à la jointure.
 """
 
 import csv
@@ -14,6 +20,8 @@ from typing import Iterator
 
 import dlt
 
+from src.le_grand_livre_des_recettes.pipeline.models.recipes import KaggleStaging
+
 
 @dlt.source(name="kaggle_recipes")
 def kaggle_recipes_source(data_dir: str = dlt.config.value):
@@ -23,18 +31,12 @@ def kaggle_recipes_source(data_dir: str = dlt.config.value):
 @dlt.resource(
     name="raw_kaggle",
     write_disposition="replace",
-    columns={
-        "name":         {"data_type": "text", "nullable": False},
-        "title_norm":   {"data_type": "text"},  # clé de jointure
-        "minutes":      {"data_type": "bigint"},
-        "n_steps":      {"data_type": "bigint"},
-        "n_ingredients":{"data_type": "bigint"},
-        "description":  {"data_type": "text"},
-    },
+    schema_contract={"columns": "evolve"},
 )
-def kaggle_raw(data_dir: str) -> Iterator[dict]:
+def kaggle_raw(data_dir: str) -> Iterator[KaggleStaging]:
     """
     Lit RAW_recipes.csv et normalise les colonnes complexes.
+    Yield des instances KaggleStaging — dlt appelle .model_dump() en interne.
     Produit une `title_norm` identique à celle du pipeline Spark
     pour permettre la jointure SQL en aval.
     """
@@ -49,24 +51,24 @@ def kaggle_raw(data_dir: str) -> Iterator[dict]:
             title: str = row.get("name", "")
             title_norm: str = _normalize_title(title)
 
-            # La déduplication est déjà gérée en SQL
             if not title_norm:
                 continue
 
             tags: list[str] = _parse_python_list(row.get("tags", ""))
             nutrition_raw: list[float] = _parse_nutrition(row.get("nutrition", ""))
 
-            yield {
-                "name":            title,
-                "title_norm":      title_norm,
-                "minutes":         _safe_int(row.get("minutes")),
-                "n_steps":         _safe_int(row.get("n_steps")),
-                "n_ingredients":   _safe_int(row.get("n_ingredients")),
-                "description":     row.get("description") or None,
-                "tags":            tags,
-                # Premier élément = kcal (convention Food.com)
-                "kaggle_energy_kcal": nutrition_raw[0] if nutrition_raw else None,
-            }
+            yield KaggleStaging(
+                name=title,
+                title_norm=title_norm,
+                minutes=_safe_int(row.get("minutes")),
+                n_steps=_safe_int(row.get("n_steps")),
+                n_ingredients=_safe_int(row.get("n_ingredients")),
+                description=row.get("description") or None,
+                tags=tags,
+                # Premier élément = kcal/portion (convention Food.com)
+                # ≠ kcal/100g — NE PAS utiliser pour le Nutri-Score
+                kaggle_energy_kcal=nutrition_raw[0] if nutrition_raw else None,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -74,8 +76,7 @@ def kaggle_raw(data_dir: str) -> Iterator[dict]:
 # ---------------------------------------------------------------------------
 
 _PUNCT_RE = re.compile(r"[^a-zA-Z0-9 ]")
-_LIST_CHARS_RE = re.compile(r"[\[\]']")
-_BRACKETS_RE = re.compile(r"[\[\]]")
+
 
 def _normalize_title(title: str) -> str:
     r"""
@@ -103,10 +104,9 @@ def _parse_nutrition(raw: str) -> list[float]:
         return []
 
     result = []
-    # .strip() et .split() sont des méthodes natives très rapides
     for item in raw.strip("[]").split(","):
         try:
-            result.append(float(item))  # float() s'occupe de virer les espaces
+            result.append(float(item))
         except ValueError:
             pass
 

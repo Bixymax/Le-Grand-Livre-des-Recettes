@@ -46,3 +46,6 @@ select = ["E", "F", "I", "UP"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    "ignore::pydantic.warnings.PydanticDeprecatedSince20:dlt.*",
+]

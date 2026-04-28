@@ -1,0 +1,24 @@
+[
+  {
+    "title": "chocolate cake",
+    "nutr_values_per100g": {
+      "energy": 350.0,
+      "fat": 15.0,
+      "protein": 5.0,
+      "salt": 0.3,
+      "saturates": 8.0,
+      "sugars": 42.0
+    }
+  },
+  {
+    "title": "apple pie",
+    "nutr_values_per100g": {
+      "energy": 237.0,
+      "fat": 11.0,
+      "protein": 2.5,
+      "salt": 0.4,
+      "saturates": 4.0,
+      "sugars": 25.0
+    }
+  }
+]

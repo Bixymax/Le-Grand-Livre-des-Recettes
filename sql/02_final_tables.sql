@@ -43,8 +43,12 @@ SELECT
     image_urls,
     has_image,
     source_url,
-    energy_kcal,
-    nutri_score(energy_kcal)        AS nutri_score,
+    -- Énergie MIT (kcal/100g) — source pour le Nutri-Score (standard européen /100g)
+    mit_energy_kcal,
+    -- Énergie Kaggle (kcal/portion) — valeur déclarative Food.com, unité différente
+    kaggle_energy_kcal,
+    -- Nutri-Score calculé exclusivement sur mit_energy_kcal (NULL si MIT manquant)
+    nutri_score(mit_energy_kcal)    AS nutri_score,
     COALESCE(tags, [])              AS tags
 FROM recipes.v_assembled
 ;
@@ -77,7 +81,7 @@ CREATE OR REPLACE TABLE recipes.ingredients_index AS
 SELECT
     recipe_id,
     title,
-    nutri_score(energy_kcal)        AS nutri_score,
+    nutri_score(mit_energy_kcal)    AS nutri_score,
     image_url,
     cook_time_cat(cook_minutes)     AS cook_time_category,
     lower(trim(ingr.ingredient))    AS ingredient
@@ -157,7 +161,7 @@ PRAGMA create_fts_index(
     'recipes.recipes_main',
     'recipe_id',
     'title',
-    stemmer       = 'french',
+    stemmer       = 'english',
     stopwords     = 'none',
     lower         = 1,
     strip_accents = 1,
@@ -183,5 +187,7 @@ SELECT
     (SELECT COUNT(*)  FROM recipes.recipes_nutrition_detail)                  AS nutrition_rows,
     (SELECT COUNT(DISTINCT ingredient) FROM recipes.ingredients_index)        AS unique_ingredients,
     (SELECT COUNT(*)  FROM recipes.recipes_main WHERE nutri_score IS NOT NULL) AS with_nutri_score,
+    (SELECT COUNT(*)  FROM recipes.recipes_main WHERE mit_energy_kcal IS NOT NULL) AS with_mit_energy,
+    (SELECT COUNT(*)  FROM recipes.recipes_main WHERE kaggle_energy_kcal IS NOT NULL) AS with_kaggle_energy,
     (SELECT COUNT(*)  FROM recipes.recipes_main WHERE has_image)              AS with_image
 ;

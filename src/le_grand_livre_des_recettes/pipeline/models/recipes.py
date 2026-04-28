@@ -1,14 +1,29 @@
 """
-Schémas Pydantic utilisés pour le typage dlt.
-Ils servent de contrat de données entre les sources et les transformers.
-dlt les utilise pour inférer le schéma des tables et valider les données.
+Schémas Pydantic du pipeline.
+
+Deux familles de modèles :
+
+- Raw* : décrivent le format brut des fichiers sources (documentation /
+  référence). Non utilisés à l'exécution.
+
+- *Staging : décrivent exactement ce que chaque @dlt.resource yield.
+  Ces modèles sont passés en `columns=` aux resources → dlt les utilise
+  pour inférer le schéma des tables staging sans avoir à lire les données.
+  Les instances sont directement yieldées ; dlt appelle .model_dump()
+  en interne (Pydantic v2).
+
+- Recipe* : schémas des tables finales (documentation des outputs SQL).
 """
 
 from typing import Optional
 from pydantic import BaseModel, Field
 
 
-class Layer1Record(BaseModel):
+# =============================================================================
+# Raw input models — format des fichiers sources (documentation uniquement)
+# =============================================================================
+
+class Layer1Raw(BaseModel):
     """Enregistrement brut issu de layer1.json (MIT Recipe1M+)."""
     id: str
     title: str
@@ -18,19 +33,20 @@ class Layer1Record(BaseModel):
     instructions: list[dict] = Field(default_factory=list)
 
 
-class Layer2Record(BaseModel):
-    """Enregistrement brut issu de layer2+.json — URLs des images."""
+class Layer2Raw(BaseModel):
+    """Enregistrement brut issu de layer2+.json."""
     id: str
     images: list[dict] = Field(default_factory=list)
 
 
-class DetIngrsRecord(BaseModel):
+class DetIngrsRaw(BaseModel):
     """Ingrédients validés depuis det_ingrs.json."""
     id: str
     ingredients: list[dict] = Field(default_factory=list)
+    valid: list[bool] = Field(default_factory=list)
 
 
-class KaggleRecord(BaseModel):
+class KaggleRaw(BaseModel):
     """Enregistrement brut depuis RAW_recipes.csv (Food.com / Kaggle)."""
     name: str
     minutes: Optional[int] = None
@@ -41,18 +57,88 @@ class KaggleRecord(BaseModel):
     n_ingredients: Optional[int] = None
 
 
-class NutritionRecord(BaseModel):
-    """Nutrition depuis recipes_with_nutritional_info.json."""
+# =============================================================================
+# Staging models — contrat exact de ce que chaque @dlt.resource yield.
+# Passés en `columns=` : dlt lit le schéma Pydantic pour définir les tables.
+# =============================================================================
+
+class Layer1Staging(BaseModel):
+    """
+    Record yielded par la resource `layer1`.
+    → Table staging : recipes.raw_layer1
+    """
+    id: str
     title: str
-    energy: Optional[float] = None
-    fat: Optional[float] = None
-    protein: Optional[float] = None
-    salt: Optional[float] = None
-    saturates: Optional[float] = None
-    sugars: Optional[float] = None
+    url: Optional[str] = None
+    partition: Optional[str] = None
+    # list[str] → child table raw_layer1__ingredients_raw (géré par dlt)
+    ingredients_raw: list[str] = Field(default_factory=list)
+    n_steps: int = 0
+    instructions_text: str = ""
 
 
-# ---- Tables finales (output schemas) ----
+class Layer2Staging(BaseModel):
+    """
+    Record yielded par la resource `layer2`.
+    → Table staging : recipes.raw_layer2
+    """
+    id: str
+    # list[str] → child table raw_layer2__image_urls (géré par dlt)
+    image_urls: list[str] = Field(default_factory=list)
+    image_url: Optional[str] = None
+    has_image: bool = False
+
+
+class DetIngrStaging(BaseModel):
+    """
+    Record yielded par la resource `det_ingrs`.
+    → Table staging : recipes.raw_det_ingrs
+    """
+    id: str
+    # list[str] → child table raw_det_ingrs__ingredients_validated (géré par dlt)
+    ingredients_validated: list[str] = Field(default_factory=list)
+    n_ingredients_validated: int = 0
+
+
+class NutritionStaging(BaseModel):
+    """
+    Record yielded par la resource `nutrition`.
+    → Table staging : recipes.raw_nutrition
+    Unités : kcal/100g (standard Nutri-Score européen).
+    """
+    title: str
+    energy: Optional[float] = None      # kcal/100g
+    fat: Optional[float] = None         # g/100g
+    protein: Optional[float] = None     # g/100g
+    salt: Optional[float] = None        # g/100g
+    saturates: Optional[float] = None   # g/100g
+    sugars: Optional[float] = None      # g/100g
+
+
+class KaggleStaging(BaseModel):
+    """
+    Record yielded par la resource `kaggle_raw`.
+    → Table staging : recipes.raw_kaggle
+
+    ATTENTION — unité énergie :
+      `kaggle_energy_kcal` est en kcal/PORTION (pas /100g).
+      Elle NE DOIT PAS être utilisée pour le Nutri-Score.
+      Utiliser NutritionStaging.energy (MIT, kcal/100g) à la place.
+    """
+    name: str
+    title_norm: str                             # clé de jointure normalisée
+    minutes: Optional[int] = None
+    n_steps: Optional[int] = None
+    n_ingredients: Optional[int] = None
+    description: Optional[str] = None
+    # list[str] → child table raw_kaggle__tags (géré par dlt)
+    tags: list[str] = Field(default_factory=list)
+    kaggle_energy_kcal: Optional[float] = None  # kcal/portion ≠ kcal/100g
+
+
+# =============================================================================
+# Output schemas — tables finales (documentation uniquement)
+# =============================================================================
 
 class RecipeMain(BaseModel):
     recipe_id: str
@@ -69,8 +155,10 @@ class RecipeMain(BaseModel):
     image_urls: list[str] = Field(default_factory=list)
     has_image: bool = False
     source_url: Optional[str] = None
-    energy_kcal: Optional[float] = None
-    nutri_score: Optional[str] = None
+    # ---- Énergie — unités séparées, ne pas mélanger ----
+    mit_energy_kcal: Optional[float] = None     # kcal/100g  → Nutri-Score
+    kaggle_energy_kcal: Optional[float] = None  # kcal/portion → affichage
+    nutri_score: Optional[str] = None           # calculé sur mit_energy_kcal uniquement
     tags: list[str] = Field(default_factory=list)
 
 

@@ -1,0 +1,17 @@
+[
+  {
+    "id": "abc111",
+    "ingredients": [{"text": "flour"}, {"text": "sugar"}, {"text": "eggs"}],
+    "valid": [true, true, true]
+  },
+  {
+    "id": "bcd222",
+    "ingredients": [{"text": "pasta"}, {"text": "ground beef"}, {"text": "tomatoes"}],
+    "valid": [true, true, false]
+  },
+  {
+    "id": "cde333",
+    "ingredients": [{"text": "apples"}, {"text": "pie crust"}, {"text": "cinnamon"}],
+    "valid": [true, false, true]
+  }
+]

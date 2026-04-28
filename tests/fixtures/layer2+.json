@@ -1,0 +1,15 @@
+[
+  {
+    "id": "abc111",
+    "images": [
+      {"url": "http://img.example.com/choc-cake-1.jpg"},
+      {"url": "http://img.example.com/choc-cake-2.jpg"}
+    ]
+  },
+  {
+    "id": "bcd222",
+    "images": [
+      {"url": "http://img.example.com/pasta-bolognese.jpg"}
+    ]
+  }
+]
