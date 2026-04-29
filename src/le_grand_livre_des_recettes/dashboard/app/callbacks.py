@@ -72,7 +72,7 @@ def _build_recipe_text_outputs(row: pd.Series) -> tuple:
 
     n_score = row.get("nutri_score")
     n_score_display = n_score if pd.notna(n_score) and n_score else "?"
-    energy = row.get("energy_kcal")
+    energy = row.get("mit_energy_kcal")
 
     def get_macro(key: str) -> str:
         val = row.get(key)
@@ -146,8 +146,8 @@ def _fetch_recipe_by_id(recipe_id: str) -> pd.DataFrame:
     """Récupère toutes les données nécessaires pour l'affichage d'une recette."""
     return con.execute(f"""
         SELECT {RECIPE_COLS}
-        FROM recipes_main m
-        LEFT JOIN recipes_nutrition n ON m.recipe_id = n.recipe_id
+        FROM recipes.recipes_main m
+        LEFT JOIN recipes.recipes_nutrition_detail n ON m.recipe_id = n.recipe_id
         WHERE m.recipe_id = ?
         LIMIT 1
     """, [recipe_id]).df()
@@ -368,7 +368,7 @@ def register_callbacks(app: dash.Dash):
             df_res = con.execute("""
                 SELECT recipe_id, title, nutri_score, cook_time_category,
                        fts_main_recipes_main.match_bm25(recipe_id, ?) AS score
-                FROM recipes_main
+                FROM recipes.recipes_main
                 WHERE fts_main_recipes_main.match_bm25(recipe_id, ?) IS NOT NULL
                 ORDER BY score DESC LIMIT 8
             """, [query.strip(), query.strip()]).df()
@@ -447,7 +447,7 @@ def register_callbacks(app: dash.Dash):
                 return _extract_recipe_payload(df)
 
         # Sinon (initialisation ou bouton aléatoire), on prend une recette au hasard avec image
-        random_id_df = con.execute("SELECT recipe_id FROM recipes_main WHERE has_image = true USING SAMPLE 1").df()
+        random_id_df = con.execute("SELECT recipe_id FROM recipes.recipes_main WHERE has_image = true USING SAMPLE 1").df()
 
         if random_id_df.empty:
             return html.Div("Pas d'image"), "Pas de recette", 0, "", "", "", {}

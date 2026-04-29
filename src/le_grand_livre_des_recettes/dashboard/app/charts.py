@@ -11,6 +11,15 @@ from .config import PALETTE, NUTRI_COLORS, PLOT_LAYOUT
 from .data import con
 
 
+def _exec(query: str, params: list):
+    """Wrapper con.execute qui évite le bug DuckDB avec params=[] vide, et gère le multi-threading."""
+    # Création d'un curseur local pour la sécurité des threads
+    cursor = con.cursor()
+
+    if params:
+        return cursor.execute(query, params)
+    return cursor.execute(query)
+
 def _build_where(
         nutri_scores: list[str] | None = None,
         cook_cats: list[str] | None = None,
@@ -35,11 +44,11 @@ def _build_where(
         params.extend(cook_cats)
 
     if kcal_min is not None:
-        clauses.append(f"{p}energy_kcal >= ?")
+        clauses.append(f"{p}mit_energy_kcal >= ?")
         params.append(kcal_min)
 
     if kcal_max is not None:
-        clauses.append(f"{p}energy_kcal <= ?")
+        clauses.append(f"{p}mit_energy_kcal <= ?")
         params.append(kcal_max)
 
     where_str = ("WHERE " + " AND ".join(clauses)) if clauses else ""
@@ -49,10 +58,10 @@ def _build_where(
 def kcal_histogram(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None) -> go.Figure:
     where_str, params = _build_where(
         nutri_scores, cook_cats, kcal_min, kcal_max,
-        base_clauses=["energy_kcal IS NOT NULL", "energy_kcal < 3500"]
+        base_clauses=["mit_energy_kcal IS NOT NULL", "mit_energy_kcal < 3500"]
     )
 
-    df = con.execute(f"SELECT energy_kcal FROM recipes_main {where_str}", params).df()
+    df = _exec(f"SELECT mit_energy_kcal AS energy_kcal FROM recipes.recipes_main {where_str}", params).df()
 
     fig = px.histogram(df, x="energy_kcal", nbins=60, color_discrete_sequence=[PALETTE["accent1"]])
     fig.update_traces(marker_line_width=0.5, marker_line_color="white")
@@ -69,7 +78,7 @@ def kcal_histogram(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=No
 
 def nutri_pie(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None) -> go.Figure:
     where_str, params = _build_where(nutri_scores, cook_cats, kcal_min, kcal_max, table_prefix="m.")
-    joins = "JOIN recipes_main m ON n.recipe_id = m.recipe_id" if where_str else ""
+    joins = "JOIN recipes.recipes_main m ON n.recipe_id = m.recipe_id" if where_str else ""
 
     query = f"""
         SELECT 
@@ -78,10 +87,10 @@ def nutri_pie(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None) -
             SUM(n.salt_g) AS "Sel",
             SUM(n.saturates_g) AS "Graisses saturées",
             SUM(n.sugars_g) AS "Sucres"
-        FROM recipes_nutrition n
+        FROM recipes.recipes_nutrition_detail n
         {joins} {where_str}
     """
-    df = con.execute(query, params).df()
+    df = _exec(query, params).df()
 
     if df.empty or df.iloc[0].isna().all():
         return go.Figure().update_layout(**PLOT_LAYOUT, title=dict(text="Données indisponibles", x=0.5, font_size=13))
@@ -100,9 +109,9 @@ def nutri_bar(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None) -
     where_str, params = _build_where(nutri_scores, cook_cats, kcal_min, kcal_max,
                                      base_clauses=["nutri_score IS NOT NULL"])
 
-    df = con.execute(f"""
+    df = _exec(f"""
         SELECT nutri_score AS score, COUNT(*) AS count
-        FROM recipes_main {where_str}
+        FROM recipes.recipes_main {where_str}
         GROUP BY score ORDER BY score
     """, params).df()
 
@@ -131,9 +140,9 @@ def cook_time_chart(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=N
         base_clauses=["cook_time_category IN ('rapide', 'moyen', 'long')"]
     )
 
-    df = con.execute(f"""
+    df = _exec(f"""
         SELECT cook_time_category, COUNT(*) AS count
-        FROM recipes_main {where_str}
+        FROM recipes.recipes_main {where_str}
         GROUP BY cook_time_category
     """, params).df()
 
@@ -165,9 +174,9 @@ def cook_time_curve(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=N
         base_clauses=["cook_minutes IS NOT NULL", "cook_minutes BETWEEN 1 AND 300"]
     )
 
-    df = con.execute(f"""
+    df = _exec(f"""
         SELECT FLOOR(cook_minutes / 5) * 5 AS bucket, COUNT(*) AS count
-        FROM recipes_main {where_str}
+        FROM recipes.recipes_main {where_str}
         GROUP BY bucket ORDER BY bucket
     """, params).df()
 
@@ -194,10 +203,10 @@ def scatter_saturates_sugars(nutri_scores=None, cook_cats=None, kcal_min=None, k
     where_str, params = _build_where(nutri_scores, cook_cats, kcal_min, kcal_max, table_prefix="m.",
                                      base_clauses=base_clauses)
 
-    df = con.execute(f"""
+    df = _exec(f"""
         SELECT n.saturates_g, n.sugars_g, COALESCE(m.nutri_score, '?') AS nutri_score, m.title
-        FROM recipes_nutrition n
-        JOIN recipes_main m ON n.recipe_id = m.recipe_id
+        FROM recipes.recipes_nutrition_detail n
+        JOIN recipes.recipes_main m ON n.recipe_id = m.recipe_id
         {where_str} USING SAMPLE 2000 ROWS
     """, params).df()
 
@@ -231,11 +240,11 @@ def _generic_top_chart(sql_field: str, color: str, title: str, nutri_scores, coo
     where_str, params = _build_where(nutri_scores, cook_cats, kcal_min, kcal_max)
     params.append(top_n)
 
-    df = con.execute(f"""
+    df = _exec(f"""
         SELECT item, COUNT(*) AS freq
         FROM (
             SELECT UNNEST({sql_field}) AS item
-            FROM recipes_main {where_str}
+            FROM recipes.recipes_main {where_str}
         ) sub
         WHERE item IS NOT NULL AND LENGTH(TRIM(item)) > 1
         GROUP BY item ORDER BY freq DESC LIMIT ?
