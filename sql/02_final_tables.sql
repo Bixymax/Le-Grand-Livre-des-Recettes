@@ -1,6 +1,7 @@
 -- =============================================================================
--- 02_final_tables.sql — v3
+-- 02_final_tables.sql — v4
 -- Création des 3 tables finales + infrastructure de recherche par ingrédient.
+-- NOTE : recipes.v_assembled est désormais une TABLE (matérialisée dans 01_assemble.sql)
 -- =============================================================================
 
 -- Nutri-Score simplifié
@@ -25,29 +26,14 @@ CREATE OR REPLACE MACRO cook_time_cat(minutes) AS
 
 -- =============================================================================
 -- Table 1 : recipes_main
--- OPTIM : QUALIFY supprimé — recipe_id est unique par construction (layer1.id)
 -- =============================================================================
 CREATE OR REPLACE TABLE recipes.recipes_main AS
 SELECT
-    recipe_id,
-    title,
-    description,
-    instructions_text,
-    ingredients_raw,
-    ingredients_validated,
-    n_ingredients_validated,
-    n_steps,
-    cook_minutes,
+    recipe_id, title, description, instructions_text, ingredients_raw,
+    ingredients_validated, n_ingredients_validated, n_steps, cook_minutes,
     cook_time_cat(cook_minutes)     AS cook_time_category,
-    image_url,
-    image_urls,
-    has_image,
-    source_url,
-    -- Énergie MIT (kcal/100g) — source pour le Nutri-Score (standard européen /100g)
-    mit_energy_kcal,
-    -- Énergie Kaggle (kcal/portion) — valeur déclarative Food.com, unité différente
-    kaggle_energy_kcal,
-    -- Nutri-Score calculé exclusivement sur mit_energy_kcal (NULL si MIT manquant)
+    image_url, image_urls, has_image, source_url,
+    mit_energy_kcal, kaggle_energy_kcal,
     nutri_score(mit_energy_kcal)    AS nutri_score,
     COALESCE(tags, [])              AS tags
 FROM recipes.v_assembled
@@ -62,20 +48,6 @@ CREATE INDEX IF NOT EXISTS idx_main_cook
 
 -- =============================================================================
 -- Table 2 : ingredients_index
--- Table dénormalisée (1 ligne = 1 ingrédient × 1 recette).
--- Sert de backend pour le filtre multi-sélection d'ingrédients.
---
--- Pattern de requête pour un filtre "ET" (recettes ayant TOUS les ingrédients) :
---   SELECT recipe_id
---   FROM recipes.ingredients_index
---   WHERE ingredient IN ('flour', 'eggs', 'butter')
---   GROUP BY recipe_id
---   HAVING COUNT(DISTINCT ingredient) = 3;   -- = card(liste filtrée)
---
--- Pattern de requête pour un filtre "OU" (recettes ayant AU MOINS UN) :
---   SELECT DISTINCT recipe_id
---   FROM recipes.ingredients_index
---   WHERE ingredient IN ('flour', 'eggs', 'butter');
 -- =============================================================================
 CREATE OR REPLACE TABLE recipes.ingredients_index AS
 SELECT
@@ -97,15 +69,7 @@ CREATE INDEX IF NOT EXISTS idx_ingr_recipe_id
     ON recipes.ingredients_index (recipe_id);
 
 -- =============================================================================
--- Vue catalogue d'ingrédients — pour la barre de sélection (filtre / autocomplete)
---
--- Retourne la liste dédupliquée triée, avec le nombre de recettes par ingrédient.
--- Usage typique (ex: Dash dcc.Dropdown ou React Select) :
---   SELECT ingredient, recipe_count
---   FROM recipes.v_ingredient_catalog
---   WHERE ingredient LIKE '%query%'
---   ORDER BY recipe_count DESC
---   LIMIT 50;
+-- Vue catalogue d'ingrédients
 -- =============================================================================
 CREATE OR REPLACE VIEW recipes.v_ingredient_catalog AS
 SELECT
@@ -118,16 +82,10 @@ ORDER BY recipe_count DESC, ingredient ASC
 
 -- =============================================================================
 -- Table 3 : recipes_nutrition_detail
--- QUALIFY conservé ici — les jointures MIT × Kaggle peuvent produire des doublons.
 -- =============================================================================
 CREATE OR REPLACE TABLE recipes.recipes_nutrition_detail AS
 SELECT
-    recipe_id,
-    fat_g,
-    protein_g,
-    salt_g,
-    saturates_g,
-    sugars_g
+    recipe_id, fat_g, protein_g, salt_g, saturates_g, sugars_g
 FROM recipes.v_assembled
 WHERE fat_g       IS NOT NULL
    OR protein_g   IS NOT NULL
@@ -141,7 +99,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_nutri_recipe_id
     ON recipes.recipes_nutrition_detail (recipe_id);
 
 -- =============================================================================
--- Vue analytique finale (dashboard / API)
+-- Vue analytique finale
 -- =============================================================================
 CREATE OR REPLACE VIEW recipes.v_full AS
 SELECT m.*, n.fat_g, n.protein_g, n.salt_g, n.sugars_g, n.saturates_g
@@ -150,12 +108,10 @@ LEFT JOIN recipes.recipes_nutrition_detail n ON m.recipe_id = n.recipe_id
 ;
 
 -- =============================================================================
--- Full-Text Search (extension DuckDB FTS)
--- BUG FIX : FTS ne supporte pas les colonnes LIST — on indexe uniquement 'title'.
--- La recherche par ingrédient passe par ingredients_index (voir ci-dessus),
--- qui dispose déjà d'un index B-tree sur la colonne 'ingredient'.
+-- Full-Text Search
 -- =============================================================================
-INSTALL fts; LOAD fts;
+INSTALL fts;
+LOAD fts;
 
 PRAGMA create_fts_index(
     'recipes.recipes_main',
@@ -168,26 +124,16 @@ PRAGMA create_fts_index(
     overwrite     = 1
 );
 
--- Exemple de recherche FTS sur les titres :
---   SELECT recipe_id, title, score
---   FROM (
---       SELECT *, fts_main_recipes_main.match_bm25(recipe_id, 'poulet curry') AS score
---       FROM recipes.recipes_main
---   )
---   WHERE score IS NOT NULL
---   ORDER BY score DESC
---   LIMIT 20;
-
 -- =============================================================================
 -- Stats finales
 -- =============================================================================
 SELECT
-    (SELECT COUNT(*)  FROM recipes.recipes_main)                              AS recipes_total,
-    (SELECT COUNT(*)  FROM recipes.ingredients_index)                         AS index_rows,
-    (SELECT COUNT(*)  FROM recipes.recipes_nutrition_detail)                  AS nutrition_rows,
-    (SELECT COUNT(DISTINCT ingredient) FROM recipes.ingredients_index)        AS unique_ingredients,
-    (SELECT COUNT(*)  FROM recipes.recipes_main WHERE nutri_score IS NOT NULL) AS with_nutri_score,
-    (SELECT COUNT(*)  FROM recipes.recipes_main WHERE mit_energy_kcal IS NOT NULL) AS with_mit_energy,
-    (SELECT COUNT(*)  FROM recipes.recipes_main WHERE kaggle_energy_kcal IS NOT NULL) AS with_kaggle_energy,
-    (SELECT COUNT(*)  FROM recipes.recipes_main WHERE has_image)              AS with_image
+    (SELECT COUNT(*)                   FROM recipes.recipes_main)                        AS recipes_total,
+    (SELECT COUNT(*)                   FROM recipes.ingredients_index)                   AS index_rows,
+    (SELECT COUNT(*)                   FROM recipes.recipes_nutrition_detail)            AS nutrition_rows,
+    (SELECT COUNT(DISTINCT ingredient) FROM recipes.ingredients_index)                   AS unique_ingredients,
+    (SELECT COUNT(*)                   FROM recipes.recipes_main WHERE nutri_score IS NOT NULL)       AS with_nutri_score,
+    (SELECT COUNT(*)                   FROM recipes.recipes_main WHERE mit_energy_kcal IS NOT NULL)   AS with_mit_energy,
+    (SELECT COUNT(*)                   FROM recipes.recipes_main WHERE kaggle_energy_kcal IS NOT NULL) AS with_kaggle_energy,
+    (SELECT COUNT(*)                   FROM recipes.recipes_main WHERE has_image)        AS with_image
 ;

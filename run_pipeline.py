@@ -37,6 +37,41 @@ DB_PATH     = OUTPUTS_DIR / "recipes_catalog.duckdb"
 SQL_DIR     = Path("sql")
 
 
+def _materialize_v_assembled(con, console):
+    """Matérialise v_assembled en TABLE par chunks pour éviter l'OOM."""
+    console.print("  → Matérialisation de v_assembled par chunks...")
+
+    # Créer la table vide avec la même structure que la vue
+    con.execute("""
+        CREATE OR REPLACE TABLE recipes.v_assembled_mat AS
+        SELECT * FROM recipes.v_assembled WHERE 1=0
+    """)
+
+    # Récupérer tous les IDs
+    ids = con.execute("SELECT _dlt_id FROM recipes.raw_layer1").fetchall()
+    ids = [row[0] for row in ids]
+    total = len(ids)
+    batch_size = 2000
+
+    for i in range(0, total, batch_size):
+        batch = ids[i:i + batch_size]
+        placeholders = ", ".join(f"'{x}'" for x in batch)
+        con.execute(f"""
+            INSERT INTO recipes.v_assembled_mat
+            SELECT * FROM recipes.v_assembled
+            WHERE recipe_id IN (
+                SELECT id FROM recipes.raw_layer1
+                WHERE _dlt_id IN ({placeholders})
+            )
+        """)
+        console.print(f"    [dim]{min(i + batch_size, total)}/{total} recettes insérées[/dim]")
+
+    # Renommer pour que 02_final_tables.sql trouve le bon nom
+    con.execute("DROP VIEW IF EXISTS recipes.v_assembled")
+    con.execute("ALTER TABLE recipes.v_assembled_mat RENAME TO v_assembled")
+    console.print("  [green]✅ v_assembled matérialisée[/green]")
+
+
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
@@ -90,34 +125,49 @@ def ingest(
 
 @app.command()
 def transform() -> None:
-    """
-    Étape 2 — Transformations SQL uniquement (sur staging DuckDB existant).
-    Jointures, enrichissement et création des 3 tables finales.
-    """
     console.rule("[bold]Étape 2 — Transformations SQL (jointures + enrichissement)")
 
     sql_files = sorted(SQL_DIR.glob("*.sql"))
-
     if not sql_files:
         console.print("[red]Aucun fichier SQL trouvé dans sql/[/red]")
         raise typer.Exit(1)
 
-    with duckdb.connect(str(DB_PATH)) as con:
+    log_path = OUTPUTS_DIR / "transform.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with duckdb.connect(str(DB_PATH)) as con, open(log_path, "w", encoding="utf-8") as logf:
+        con.execute("SET threads=2")
+        con.execute("SET preserve_insertion_order=false")
+        con.execute("SET memory_limit='8GB'")
+
         temp_dir = OUTPUTS_DIR / "tmp"
         temp_dir.mkdir(exist_ok=True)
-        
-        # .as_posix() force les forward slashes (ex: "data/outputs/tmp")
         con.execute(f"SET temp_directory='{temp_dir.as_posix()}'")
 
         for sql_file in sql_files:
             console.print(f"  → Exécution de [cyan]{sql_file.name}[/cyan]")
-            t0 = time.perf_counter()
             sql_text = sql_file.read_text(encoding="utf-8")
+
+            tmp_parquet = (OUTPUTS_DIR / "tmp" / "assembled.parquet").as_posix()
+            sql_text = sql_text.replace("data/outputs/tmp/assembled.parquet", tmp_parquet)
             statements = [s.strip() for s in sql_text.split(";") if s.strip()]
-            for stmt in statements:
-                con.execute(stmt)
-            elapsed = time.perf_counter() - t0
-            console.print(f"    [dim]terminé en {elapsed:.1f}s[/dim]")
+
+            t0 = time.perf_counter()
+            try:
+                for i, stmt in enumerate(statements, 1):
+                    logf.write(f"[{sql_file.name}] stmt #{i}:\n{stmt[:200]}\n")
+                    logf.flush()
+                    con.execute(stmt)
+                    logf.write(f"  → OK\n")
+                    logf.flush()
+                elapsed = time.perf_counter() - t0
+                console.print(f"    [dim]terminé en {elapsed:.1f}s[/dim]")
+            except Exception as exc:
+                elapsed = time.perf_counter() - t0
+                console.print(f"    [red]❌ Erreur au statement #{i} après {elapsed:.1f}s[/red]")
+                console.print(f"    [red]{exc}[/red]")
+                logf.write(f"  → ERREUR: {exc}\n")
+                raise typer.Exit(1)
 
     console.print("[green]✅ Transformations terminées[/green]")
 
