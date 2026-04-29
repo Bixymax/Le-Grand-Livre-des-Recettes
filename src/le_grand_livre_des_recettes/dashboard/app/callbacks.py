@@ -23,26 +23,35 @@ from .data import con, RECIPE_COLS
 
 
 # Helpers : Traitement des données
-def _find_valid_image_url(image_url: str, image_urls: list | np.ndarray) -> str:
+def _find_valid_image_url(image_url: str, image_urls: list | np.ndarray | str) -> str:
     """Retourne la première URL d'image valide (HTTP 200)."""
-    candidates = [image_url] if image_url else []
+    candidates = [image_url] if image_url and isinstance(image_url, str) else []
 
     if image_urls is not None:
+        # Sécurité : on convertit la string en vraie liste si DuckDB/Pandas l'a transformée en texte
+        if isinstance(image_urls, str):
+            try:
+                image_urls = ast.literal_eval(image_urls)
+            except (ValueError, SyntaxError):
+                image_urls = []
+
         urls_list = image_urls.tolist() if isinstance(image_urls, np.ndarray) else image_urls
-        candidates.extend([u for u in urls_list if u and u not in candidates])
+
+        # On s'assure qu'on itère bien sur une liste de chaînes
+        if isinstance(urls_list, list):
+            candidates.extend([u for u in urls_list if u and isinstance(u, str) and u not in candidates])
 
     for url in candidates:
         try:
-            # Timeout court pour ne pas figer le layout en cas d'URL morte
             req = urlopen(url, timeout=2)
             content_type = req.headers.get("Content-Type", "")
             if req.status == 200 and ("image" in content_type or not content_type):
                 return url
         except (HTTPError, URLError, Exception):
+            # L'URL a échoué, on passe silencieusement à la suivante dans la liste
             continue
 
     return ""
-
 
 def _format_instructions(raw_text: str) -> list[str]:
     """Nettoie et formate le texte brut des instructions."""
