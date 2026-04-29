@@ -364,14 +364,17 @@ def register_callbacks(app: dash.Dash):
             return ""
 
         try:
-            # Recherche Full-Text via BM25 (très performant sur DuckDB)
-            df_res = con.execute("""
-                SELECT recipe_id, title, nutri_score, cook_time_category,
-                       fts_main_recipes_main.match_bm25(recipe_id, ?) AS score
-                FROM recipes.recipes_main
-                WHERE fts_main_recipes_main.match_bm25(recipe_id, ?) IS NOT NULL
-                ORDER BY score DESC LIMIT 8
-            """, [query.strip(), query.strip()]).df()
+            # Recherche Full-Text via BM25 (correction du schéma 'recipes' ET utilisation du cursor)
+            df_res = con.cursor().execute("""
+                                          SELECT recipe_id,
+                                                 title,
+                                                 nutri_score,
+                                                 cook_time_category,
+                                                 fts_recipes_recipes_main.match_bm25(recipe_id, ?) AS score
+                                          FROM recipes.recipes_main
+                                          WHERE fts_recipes_recipes_main.match_bm25(recipe_id, ?) IS NOT NULL
+                                          ORDER BY score DESC LIMIT 8
+                                          """, [query.strip(), query.strip()]).df()
 
             if df_res.empty:
                 return html.Span("Aucun résultat trouvé.", style={"color": PALETTE["muted"], "fontStyle": "italic"})
