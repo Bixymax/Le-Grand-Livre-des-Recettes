@@ -1,120 +1,85 @@
 """
-Source dlt pour le dataset Food.com / Kaggle (RAW_recipes.csv).
+Source PySpark pour le dataset Food.com / Kaggle (RAW_recipes.csv).
 
-Ce fichier CSV contient des colonnes `tags` et `nutrition` stockées
-comme des chaînes de caractères Python (ex: "['tag1', 'tag2']").
-La normalisation est faite ici, en Python pur, avant le yield.
+Les colonnes `tags` et `nutrition` sont stockées comme des chaînes de
+caractères Python (ex: "['tag1', 'tag2']"). On les normalise ici avec
+des regexp_replace + split identiques au notebook Databricks original.
 
-ATTENTION unité énergie :
+ATTENTION — unité énergie :
   `kaggle_energy_kcal` est en kcal/PORTION (premier élément du champ
   `nutrition` de Food.com), pas en kcal/100g.
-  Elle ne doit PAS être utilisée pour le Nutri-Score — c'est uniquement
-  une valeur déclarative utile à l'affichage et à la jointure.
+  Elle NE DOIT PAS être utilisée pour calculer le Nutri-Score.
+  Utiliser `energy_kcal` (source MIT, kcal/100g) à la place.
 """
 
-import csv
-import ast
-import re
-from pathlib import Path
-from typing import Iterator
+from __future__ import annotations
 
-import dlt
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql.types import FloatType, IntegerType, StringType
 
-from src.le_grand_livre_des_recettes.pipeline.models.recipes import KaggleStaging
+from src.le_grand_livre_des_recettes.pipeline import config as cfg
 
 
-@dlt.source(name="kaggle_recipes")
-def kaggle_recipes_source(data_dir: str = dlt.config.value):
-    return (kaggle_raw(data_dir),)
-
-
-@dlt.resource(
-    name="raw_kaggle",
-    write_disposition="replace",
-    schema_contract={"columns": "evolve"},
-)
-def kaggle_raw(data_dir: str) -> Iterator[KaggleStaging]:
+def read_kaggle(spark: SparkSession) -> "DataFrame":  # noqa: F821
     """
     Lit RAW_recipes.csv et normalise les colonnes complexes.
-    Yield des instances KaggleStaging — dlt appelle .model_dump() en interne.
-    Produit une `title_norm` identique à celle du pipeline Spark
-    pour permettre la jointure SQL en aval.
+
+    Transformations :
+      - tags_raw   : chaîne "['tag1', 'tag2']" → Array[String] Spark
+      - title_norm : clé de jointure identique à celle de mit_recipes.py
+      - kaggle_energy_kcal : premier élément de la colonne `nutrition`
+        (kcal/portion, ≠ kcal/100g)
     """
-    path = Path(data_dir) / "RAW_recipes.csv"
-    if not path.exists():
-        raise FileNotFoundError(f"RAW_recipes.csv introuvable dans {data_dir}")
-
-    with open(path, encoding="utf-8", newline="") as f:
-        reader = csv.DictReader(f)
-
-        for row in reader:
-            title: str = row.get("name", "")
-            title_norm: str = _normalize_title(title)
-
-            if not title_norm:
-                continue
-
-            tags: list[str] = _parse_python_list(row.get("tags", ""))
-            nutrition_raw: list[float] = _parse_nutrition(row.get("nutrition", ""))
-
-            yield KaggleStaging(
-                name=title,
-                title_norm=title_norm,
-                minutes=_safe_int(row.get("minutes")),
-                n_steps=_safe_int(row.get("n_steps")),
-                n_ingredients=_safe_int(row.get("n_ingredients")),
-                description=row.get("description") or None,
-                tags=tags,
-                # Premier élément = kcal/portion (convention Food.com)
-                # ≠ kcal/100g — NE PAS utiliser pour le Nutri-Score
-                kaggle_energy_kcal=nutrition_raw[0] if nutrition_raw else None,
-            )
-
-
-# ---------------------------------------------------------------------------
-# Helpers — logique de normalisation extraite du pipeline Spark original
-# ---------------------------------------------------------------------------
-
-_PUNCT_RE = re.compile(r"[^a-zA-Z0-9 ]")
-
-
-def _normalize_title(title: str) -> str:
-    r"""
-    Reproduit exactement :
-      F.lower(F.trim(F.regexp_replace("title", r"[^a-zA-Z0-9\s]", "")))
-    pour garantir la compatibilité de la clé de jointure.
-    """
-    return _PUNCT_RE.sub("", title).lower().strip()
-
-
-def _parse_python_list(raw: str) -> list[str]:
-    """
-    Convertit une chaîne type "['tag1', 'tag2']" en list[str].
-    Reproduit le regexp_replace + split du pipeline Spark.
-    """
-    try:
-        return [str(x).strip() for x in ast.literal_eval(raw)]
-    except Exception:
-        return []
+    return (
+        spark.read
+        .option("header", True)
+        .option("inferSchema", True)
+        .option("multiLine", True)
+        .option("escape", '"')
+        .csv(str(cfg.RAW_CSV_PATH))
+        .select(
+            F.col("id").cast(StringType()).alias("kaggle_id"),
+            F.col("minutes").cast(IntegerType()).alias("cook_minutes"),
+            F.col("tags").alias("tags_raw"),
+            F.col("nutrition").alias("nutrition_raw"),
+            F.col("n_steps").cast(IntegerType()),
+            F.col("description"),
+            F.col("name").alias("name_kaggle"),
+        )
+        # Nettoyage "['tag1', 'tag2']" → ["tag1", "tag2"]
+        .withColumn(
+            "tags",
+            F.split(
+                F.regexp_replace(
+                    F.regexp_replace("tags_raw", r"[\[\]']", ""),
+                    r",\s+",
+                    ",",
+                ),
+                ",",
+            ),
+        )
+        # Clé de jointure normalisée — reproduit exactement la logique MIT
+        .withColumn(
+            "title_norm",
+            F.lower(F.trim(F.regexp_replace("name_kaggle", r"[^a-zA-Z0-9\s]", ""))),
+        )
+        # Premier élément de "[kcal, fat, sugar, ...]" → kaggle_energy_kcal (kcal/portion)
+        .withColumn(
+            "nutrition_array",
+            F.split(F.regexp_replace("nutrition_raw", r"[\[\]]", ""), ","),
+        )
+        .withColumn(
+            "kaggle_energy_kcal",
+            F.col("nutrition_array")[0].cast(FloatType()),
+        )
+        .drop("tags_raw", "name_kaggle", "nutrition_array", "nutrition_raw")
+        # Dédoublonnage par title_norm (même logique que le notebook Databricks)
+        .dropDuplicates(["title_norm"])
+    )
 
 
-def _parse_nutrition(raw: str) -> list[float]:
-    """Extrait les valeurs numériques depuis "[kcal, fat, sugar, ...]"."""
-    if not raw or raw == "[]":
-        return []
-
-    result = []
-    for item in raw.strip("[]").split(","):
-        try:
-            result.append(float(item))
-        except ValueError:
-            pass
-
-    return result
-
-
-def _safe_int(value: object) -> int | None:
-    try:
-        return int(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return None
+def write_kaggle_staging(spark: SparkSession) -> None:
+    """Lit RAW_recipes.csv et écrit le Parquet staging."""
+    read_kaggle(spark).write.mode("overwrite").parquet(cfg.STAGING_KAGGLE)
+    print("  ✅ kaggle    → staging/kaggle")

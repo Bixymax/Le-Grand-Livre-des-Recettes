@@ -4,21 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "recipes-pipeline"
-version = "0.1.0"
-description = "dlt pipeline for MIT + Kaggle recipes datasets"
+version = "0.2.0"
+description = "PySpark pipeline for MIT + Kaggle recipes datasets"
 requires-python = ">=3.11"
 
 dependencies = [
     # Core pipeline
-    "dlt[duckdb,filesystem]>=1.6.0",
-    # Delta Lake support
-    "deltalake>=0.22.0",
-    # Data processing
-    "duckdb>=1.1.0",
-    "ijson>=3.2.0",
-    "pandas>=2.2.0",
-    "pyarrow>=17.0.0",
-    # Validation
+    "pyspark>=3.5.0",
+    # Validation (modèles Pydantic conservés pour documentation)
     "pydantic>=2.7.0",
     # Utilities
     "python-dotenv>=1.0.0",
@@ -46,6 +39,3 @@ select = ["E", "F", "I", "UP"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-filterwarnings = [
-    "ignore::pydantic.warnings.PydanticDeprecatedSince20:dlt.*",
-]

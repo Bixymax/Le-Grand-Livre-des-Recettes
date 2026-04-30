@@ -1,75 +1,54 @@
 """
-Entrypoint du pipeline recipes.
+Entrypoint du pipeline recipes (PySpark).
+
+Remplace l'ancienne implémentation dlt + DuckDB par un pipeline PySpark pur.
+La session Spark est fournie par le cluster Docker (docker-compose up),
+ou créée en mode local[*] si la variable SPARK_MASTER_URL n'est pas définie.
 
 Usage :
-    python run_pipeline.py run              # pipeline complet (dlt + SQL)
-    python run_pipeline.py run --dest duckdb
-    python run_pipeline.py run --dest delta  # filesystem Delta Lake
-    python run_pipeline.py ingest            # dlt uniquement (staging)
-    python run_pipeline.py transform         # SQL uniquement (sur staging existant)
-    python run_pipeline.py info              # stats sur les tables finales
+    python run_pipeline.py run              # pipeline complet (ingest + transform)
+    python run_pipeline.py run --master spark://spark-master:7077
+    python run_pipeline.py ingest           # Phase 1 : staging Parquet uniquement
+    python run_pipeline.py transform        # Phase 2 : jointures + tables finales
+    python run_pipeline.py info             # stats sur les tables finales
+
+Variables d'environnement :
+    SPARK_MASTER_URL   URL du master Spark (défaut : local[*])
+                       Exemple : spark://spark-master:7077
+
+Architecture du pipeline :
+    Phase 1 — Ingestion (ingest)
+      Lecture des fichiers sources (JSON + CSV) → écriture Parquet staging.
+      Identique à la Phase 1 du notebook Databricks.
+
+    Phase 2 — Transformation (transform)
+      Lecture des Parquets staging → jointures → enrichissement → 3 tables finales.
+      Identique aux SQL 01_assemble.sql + 02_final_tables.sql.
+
+Tables finales produites dans data/outputs/parquets/ :
+    recipes_main/              → une ligne par recette
+    ingredients_index/         → une ligne par (recette, ingrédient)
+    recipes_nutrition_detail/  → détail nutritionnel par recette
 """
 
 from __future__ import annotations
 
 import time
-from pathlib import Path
 from typing import Annotated
 
-import dlt
-import duckdb
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from src.le_grand_livre_des_recettes.pipeline.sources.mit_recipes import mit_recipes_source
-from src.le_grand_livre_des_recettes.pipeline.sources.kaggle_recipes import kaggle_recipes_source
+from src.le_grand_livre_des_recettes.pipeline import config as cfg
+from src.le_grand_livre_des_recettes.pipeline.spark_session import get_or_create_spark
+from src.le_grand_livre_des_recettes.pipeline.sources.mit_recipes import write_mit_staging
+from src.le_grand_livre_des_recettes.pipeline.sources.kaggle_recipes import write_kaggle_staging
+from src.le_grand_livre_des_recettes.pipeline.transformers.assemble import assemble
+from src.le_grand_livre_des_recettes.pipeline.transformers.enrich import write_final_tables
 
-app = typer.Typer(help="🍽️  Recipes Data Pipeline — dlt + DuckDB")
+app     = typer.Typer(help="🍽️  Recipes Data Pipeline — PySpark")
 console = Console()
-
-# ---------------------------------------------------------------------------
-# Chemins
-# ---------------------------------------------------------------------------
-DATA_DIR    = Path("data")
-OUTPUTS_DIR = DATA_DIR / "outputs"
-DB_PATH     = OUTPUTS_DIR / "recipes_catalog.duckdb"
-SQL_DIR     = Path("sql")
-
-
-def _materialize_v_assembled(con, console):
-    """Matérialise v_assembled en TABLE par chunks pour éviter l'OOM."""
-    console.print("  → Matérialisation de v_assembled par chunks...")
-
-    # Créer la table vide avec la même structure que la vue
-    con.execute("""
-        CREATE OR REPLACE TABLE recipes.v_assembled_mat AS
-        SELECT * FROM recipes.v_assembled WHERE 1=0
-    """)
-
-    # Récupérer tous les IDs
-    ids = con.execute("SELECT _dlt_id FROM recipes.raw_layer1").fetchall()
-    ids = [row[0] for row in ids]
-    total = len(ids)
-    batch_size = 2000
-
-    for i in range(0, total, batch_size):
-        batch = ids[i:i + batch_size]
-        placeholders = ", ".join(f"'{x}'" for x in batch)
-        con.execute(f"""
-            INSERT INTO recipes.v_assembled_mat
-            SELECT * FROM recipes.v_assembled
-            WHERE recipe_id IN (
-                SELECT id FROM recipes.raw_layer1
-                WHERE _dlt_id IN ({placeholders})
-            )
-        """)
-        console.print(f"    [dim]{min(i + batch_size, total)}/{total} recettes insérées[/dim]")
-
-    # Renommer pour que 02_final_tables.sql trouve le bon nom
-    con.execute("DROP VIEW IF EXISTS recipes.v_assembled")
-    con.execute("ALTER TABLE recipes.v_assembled_mat RENAME TO v_assembled")
-    console.print("  [green]✅ v_assembled matérialisée[/green]")
 
 
 # ---------------------------------------------------------------------------
@@ -78,14 +57,14 @@ def _materialize_v_assembled(con, console):
 
 @app.command()
 def run(
-    dest: Annotated[str, typer.Option(help="Destination : 'duckdb' ou 'delta'")] = "duckdb",
+    master: Annotated[str | None, typer.Option(help="URL du master Spark")] = None,
 ) -> None:
-    """Lance le pipeline complet : ingestion dlt → transformations SQL."""
-    console.rule("[bold blue]🍽️  Recipes Pipeline — Full Run")
+    """Lance le pipeline complet : ingestion (staging) → transformations (tables finales)."""
+    console.rule("[bold blue]🍽️  Recipes Pipeline — Full Run (PySpark)")
     t0 = time.perf_counter()
 
-    ingest(dest=dest)
-    transform()
+    ingest(master=master)
+    transform(master=master)
 
     elapsed = time.perf_counter() - t0
     console.print(f"\n[green]✅ Pipeline terminé en {elapsed:.1f}s[/green]")
@@ -93,151 +72,111 @@ def run(
 
 @app.command()
 def ingest(
-    dest: Annotated[str, typer.Option(help="Destination : 'duckdb' ou 'delta'")] = "duckdb",
+    master: Annotated[str | None, typer.Option(help="URL du master Spark")] = None,
 ) -> None:
     """
-    Étape 1 — Ingestion dlt uniquement.
-    Charge les sources raw vers les tables staging.
+    Phase 1 — Ingestion : lit les fichiers sources et écrit les Parquets staging.
+
+    Fichiers lus depuis data/raw/ :
+      layer1.json, layer2+.json, det_ingrs.json,
+      recipes_with_nutritional_info.json, RAW_recipes.csv
+
+    Parquets écrits dans data/staging/.
     """
-    console.rule("[bold]Étape 1 — Ingestion dlt (sources → staging)")
+    console.rule("[bold]Phase 1 — Ingestion (sources → staging Parquet)")
 
-    destination = _build_destination(dest)
+    # Création des dossiers de sortie
+    cfg.STAGING_DIR.mkdir(parents=True, exist_ok=True)
 
-    pipeline = dlt.pipeline(
-        pipeline_name="recipes_pipeline",
-        destination=destination,
-        dataset_name="recipes",
-        progress="log",        # <-- LIGNE MODIFIÉE : on remplace "rich" par "log" (ou on efface la ligne)
-    )
+    spark = get_or_create_spark(master=master)
+    console.print(f"  Spark master : [cyan]{spark.sparkContext.master}[/cyan]")
 
-    # Extraction des deux sources en parallèle
-    sources = [
-        mit_recipes_source(),
-        kaggle_recipes_source(),
-    ]
+    t0 = time.perf_counter()
+    write_mit_staging(spark)
+    write_kaggle_staging(spark)
+    elapsed = time.perf_counter() - t0
 
-    with console.status("Extraction + chargement en cours..."):
-        load_info = pipeline.run(sources, loader_file_format="parquet")
-
-    console.print(load_info)
-    console.print("[green]✅ Ingestion terminée[/green]")
+    console.print(f"\n[green]✅ Ingestion terminée en {elapsed:.1f}s[/green]")
 
 
 @app.command()
-def transform() -> None:
-    console.rule("[bold]Étape 2 — Transformations SQL (jointures + enrichissement)")
+def transform(
+    master: Annotated[str | None, typer.Option(help="URL du master Spark")] = None,
+) -> None:
+    """
+    Phase 2 — Transformation : jointures + enrichissement → 3 tables finales Parquet.
 
-    sql_files = sorted(SQL_DIR.glob("*.sql"))
-    if not sql_files:
-        console.print("[red]Aucun fichier SQL trouvé dans sql/[/red]")
-        raise typer.Exit(1)
+    Lit depuis data/staging/.
+    Écrit dans data/outputs/parquets/.
+    """
+    console.rule("[bold]Phase 2 — Transformation (staging → tables finales)")
 
-    log_path = OUTPUTS_DIR / "transform.log"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
+    # Création des dossiers de sortie
+    cfg.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    (cfg.OUTPUT_DIR.parent / "tmp").mkdir(parents=True, exist_ok=True)
 
-    with duckdb.connect(str(DB_PATH)) as con, open(log_path, "w", encoding="utf-8") as logf:
-        con.execute("SET threads=2")
-        con.execute("SET preserve_insertion_order=false")
-        con.execute("SET memory_limit='8GB'")
+    spark = get_or_create_spark(master=master)
+    console.print(f"  Spark master : [cyan]{spark.sparkContext.master}[/cyan]")
 
-        temp_dir = OUTPUTS_DIR / "tmp"
-        temp_dir.mkdir(exist_ok=True)
-        con.execute(f"SET temp_directory='{temp_dir.as_posix()}'")
+    t0 = time.perf_counter()
 
-        for sql_file in sql_files:
-            console.print(f"  → Exécution de [cyan]{sql_file.name}[/cyan]")
-            sql_text = sql_file.read_text(encoding="utf-8")
+    console.print("  → Assemblage des DataFrames...")
+    df_assembled = assemble(spark)
 
-            tmp_parquet = (OUTPUTS_DIR / "tmp" / "assembled.parquet").as_posix()
-            sql_text = sql_text.replace("data/outputs/tmp/assembled.parquet", tmp_parquet)
-            statements = [s.strip() for s in sql_text.split(";") if s.strip()]
+    console.print("  → Écriture des tables finales...")
+    write_final_tables(df_assembled)
 
-            t0 = time.perf_counter()
-            try:
-                for i, stmt in enumerate(statements, 1):
-                    logf.write(f"[{sql_file.name}] stmt #{i}:\n{stmt[:200]}\n")
-                    logf.flush()
-                    con.execute(stmt)
-                    logf.write(f"  → OK\n")
-                    logf.flush()
-                elapsed = time.perf_counter() - t0
-                console.print(f"    [dim]terminé en {elapsed:.1f}s[/dim]")
-            except Exception as exc:
-                elapsed = time.perf_counter() - t0
-                console.print(f"    [red]❌ Erreur au statement #{i} après {elapsed:.1f}s[/red]")
-                console.print(f"    [red]{exc}[/red]")
-                logf.write(f"  → ERREUR: {exc}\n")
-                raise typer.Exit(1)
-
-    console.print("[green]✅ Transformations terminées[/green]")
+    elapsed = time.perf_counter() - t0
+    console.print(f"\n[green]✅ Transformations terminées en {elapsed:.1f}s[/green]")
 
 
 @app.command()
-def info() -> None:
-    """Affiche les statistiques des tables finales."""
+def info(
+    master: Annotated[str | None, typer.Option(help="URL du master Spark")] = None,
+) -> None:
+    """Affiche les statistiques des 3 tables finales."""
     console.rule("[bold]Stats des tables finales")
 
-    if not DB_PATH.exists():
-        console.print(f"[red]Base introuvable : {DB_PATH}[/red]")
+    spark = get_or_create_spark(master=master)
+
+    try:
+        df_main  = spark.read.parquet(cfg.OUT_RECIPES_MAIN)
+        df_index = spark.read.parquet(cfg.OUT_INGREDIENTS_INDEX)
+        df_nutr  = spark.read.parquet(cfg.OUT_NUTRITION_DETAIL)
+    except Exception as exc:
+        console.print(f"[red]Impossible de lire les tables finales : {exc}[/red]")
+        console.print("[yellow]Avez-vous lancé 'run' ou 'transform' au préalable ?[/yellow]")
         raise typer.Exit(1)
 
-    with duckdb.connect(str(DB_PATH), read_only=True) as con:
-        rows = con.execute("""
-            SELECT
-                'recipes_main'             AS table_name,
-                COUNT(*)                   AS rows,
-                COUNT(image_url)           AS with_image,
-                COUNT(nutri_score)         AS with_nutri_score
-            FROM recipes.recipes_main
-            UNION ALL
-            SELECT 'ingredients_index',
-                COUNT(*), NULL, NULL
-            FROM recipes.ingredients_index
-            UNION ALL
-            SELECT 'recipes_nutrition_detail',
-                COUNT(*), NULL, NULL
-            FROM recipes.recipes_nutrition_detail
-        """).fetchall()
+    # Calcul des stats
+    total_recipes   = df_main.count()
+    with_image      = df_main.filter("image_url IS NOT NULL").count()
+    with_nutri      = df_main.filter("nutri_score IS NOT NULL").count()
+    with_mit_energy = df_main.filter("mit_energy_kcal IS NOT NULL").count()
+    index_rows      = df_index.count()
+    nutr_rows       = df_nutr.count()
 
     table = Table(show_header=True, header_style="bold magenta")
     table.add_column("Table")
-    table.add_column("Rows", justify="right")
-    table.add_column("With image", justify="right")
-    table.add_column("With nutri-score", justify="right")
+    table.add_column("Lignes", justify="right")
+    table.add_column("Avec image", justify="right")
+    table.add_column("Avec nutri-score", justify="right")
 
-    for row in rows:
-        table.add_row(
-            row[0],
-            f"{row[1]:,}",
-            f"{row[2]:,}" if row[2] is not None else "—",
-            f"{row[3]:,}" if row[3] is not None else "—",
-        )
+    table.add_row(
+        "recipes_main",
+        f"{total_recipes:,}",
+        f"{with_image:,}",
+        f"{with_nutri:,} (mit_energy : {with_mit_energy:,})",
+    )
+    table.add_row("ingredients_index",        f"{index_rows:,}", "—", "—")
+    table.add_row("recipes_nutrition_detail", f"{nutr_rows:,}",  "—", "—")
 
     console.print(table)
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Entrypoint
 # ---------------------------------------------------------------------------
-
-def _build_destination(dest: str):
-    """Construit la destination dlt selon l'option --dest."""
-    if dest == "duckdb":
-        # S'assurer que le dossier parent existe pour DuckDB
-        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        return dlt.destinations.duckdb(
-            credentials=str(DB_PATH)
-        )
-    if dest == "delta":
-        # S'assurer que le dossier parent existe pour le filesystem
-        (OUTPUTS_DIR / "delta").mkdir(parents=True, exist_ok=True)
-        return dlt.destinations.filesystem(
-            bucket_url=str(OUTPUTS_DIR / "delta"),
-            destination_name="filesystem",
-        )
-    console.print(f"[red]Destination inconnue : '{dest}'. Utiliser 'duckdb' ou 'delta'.[/red]")
-    raise typer.Exit(1)
-
 
 if __name__ == "__main__":
     app()

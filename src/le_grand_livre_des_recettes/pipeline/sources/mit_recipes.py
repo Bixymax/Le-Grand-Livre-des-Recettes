@@ -1,193 +1,223 @@
 """
-Source dlt pour les fichiers MIT Recipe1M+.
+Source PySpark pour les fichiers MIT Recipe1M+.
 
-Chaque @dlt.resource est un générateur Python pur — pas de Spark, pas de Pandas.
-dlt gère lui-même le buffering, la sérialisation et l'écriture vers la destination.
+Chaque fonction lit un fichier JSON avec un schéma Spark explicite
+(équivalent aux StructType du notebook Databricks), applique les
+transformations de normalisation, et écrit un fichier Parquet staging.
 
-Intégration Pydantic ↔ dlt :
-  - Le générateur yield des instances *Staging (ex: Layer1Staging).
-  - dlt détecte les instances Pydantic et infère automatiquement le schéma
-    des tables staging depuis la définition de la classe (types, nullable…).
-  - `columns=Model` N'EST PAS utilisé : passer `columns=` ET yielder des
-    instances Pydantic crée un double-validateur conflictuel — dlt enveloppe
-    le modèle dans un `ModelExtraAllow` qui ne peut pas valider une instance
-    déjà typée, levant une ResourceExtractionError.
-  - `schema_contract={"columns": "evolve"}` autorise l'évolution du schéma
-    entre deux runs (sinon dlt gèle le schéma après le 1er run et tout
-    changement de nullable lève une DataValidationError).
-
-Fichiers attendus dans data_dir :
-  - layer1.json                          (titre, URL, ingrédients bruts, instructions)
-  - layer2+.json                         (URLs des images)
-  - det_ingrs.json                       (ingrédients validés avec flag booléen)
-  - recipes_with_nutritional_info.json   (macronutriments MIT, kcal/100g)
+Transformations clés :
+  - F.transform()  : extraction du texte des structures JSON imbriquées,
+                     sans UDF → reste dans la JVM, plus performant.
+  - arrays_zip()   : fusion des tableaux parallèles `ingredients` et `valid`
+                     de det_ingrs.json pour filtrer les ingrédients validés.
+  - title_norm     : clé de jointure normalisée (minuscules + sans ponctuation)
+                     identique à celle du pipeline Databricks ET de la source
+                     kaggle_recipes.py — indispensable pour la jointure croisée.
 """
 
-from pathlib import Path
-from typing import Iterator
+from __future__ import annotations
 
-import dlt
-import ijson.backends.yajl2_c as ijson
-from dlt.sources import DltResource
-
-from src.le_grand_livre_des_recettes.pipeline.models.recipes import (
-    Layer1Staging,
-    Layer2Staging,
-    DetIngrStaging,
-    NutritionStaging,
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
+from pyspark.sql.types import (
+    ArrayType,
+    BooleanType,
+    FloatType,
+    StringType,
+    StructField,
+    StructType,
 )
 
+from src.le_grand_livre_des_recettes.pipeline import config as cfg
 
-@dlt.source(name="mit_recipes")
-def mit_recipes_source(
-        data_dir: str = dlt.config.value,
-) -> tuple[DltResource, ...]:
+# ---------------------------------------------------------------------------
+# Schémas Spark explicites
+# Avantage vs inferSchema : pas de scan préalable du fichier, déterministe.
+# ---------------------------------------------------------------------------
+
+_LAYER1_SCHEMA = StructType([
+    StructField("id",           StringType(), True),
+    StructField("title",        StringType(), True),
+    StructField("url",          StringType(), True),
+    StructField("partition",    StringType(), True),
+    StructField("instructions", ArrayType(StructType([
+        StructField("text", StringType(), True),
+    ])), True),
+    StructField("ingredients",  ArrayType(StructType([
+        StructField("text", StringType(), True),
+    ])), True),
+])
+
+_LAYER2_SCHEMA = StructType([
+    StructField("id",     StringType(), True),
+    StructField("images", ArrayType(StructType([
+        StructField("id",  StringType(), True),
+        StructField("url", StringType(), True),
+    ])), True),
+])
+
+_DET_INGRS_SCHEMA = StructType([
+    StructField("id",          StringType(), True),
+    StructField("ingredients", ArrayType(StructType([
+        StructField("text", StringType(), True),
+    ])), True),
+    StructField("valid",       ArrayType(BooleanType()), True),
+])
+
+_NUTR_SCHEMA = StructType([
+    StructField("title", StringType(), True),
+    StructField("nutr_values_per100g", StructType([
+        StructField("energy",    FloatType(), True),
+        StructField("fat",       FloatType(), True),
+        StructField("protein",   FloatType(), True),
+        StructField("salt",      FloatType(), True),
+        StructField("saturates", FloatType(), True),
+        StructField("sugars",    FloatType(), True),
+    ]), True),
+])
+
+# ---------------------------------------------------------------------------
+# Macro de normalisation du titre (clé de jointure)
+# Reproduit exactement : F.lower(F.trim(F.regexp_replace(col, r"[^a-zA-Z0-9\s]", "")))
+# ---------------------------------------------------------------------------
+
+def _normalize_title(col_name: str) -> "Column":  # noqa: F821
+    return F.lower(F.trim(F.regexp_replace(col_name, r"[^a-zA-Z0-9\s]", "")))
+
+
+# ---------------------------------------------------------------------------
+# Readers
+# ---------------------------------------------------------------------------
+
+def read_layer1(spark: SparkSession) -> "DataFrame":  # noqa: F821
     """
-    Groupe les 4 ressources MIT en une seule source cohérente.
-    dlt les charge en parallèle vers des tables staging distinctes.
+    Lit layer1.json et retourne un DataFrame staging avec :
+      - instructions_text : étapes concaténées avec " | "
+      - ingredients_raw   : liste brute des textes d'ingrédients
+      - title_norm        : clé de jointure normalisée
     """
     return (
-        layer1(data_dir),
-        layer2(data_dir),
-        det_ingrs(data_dir),
-        nutrition(data_dir),
+        spark.read
+        .option("multiLine", True)
+        .schema(_LAYER1_SCHEMA)
+        .json(str(cfg.LAYER1_PATH))
+        # Concatène les étapes en une seule chaîne séparée par " | "
+        .withColumn(
+            "instructions_text",
+            F.concat_ws(" | ", F.transform("instructions", lambda x: x["text"])),
+        )
+        # Extrait les textes d'ingrédients dans un Array[String] simple
+        .withColumn(
+            "ingredients_raw",
+            F.transform("ingredients", lambda x: x["text"]),
+        )
+        .withColumn("n_steps", F.size("instructions"))
+        .withColumn("title_norm", _normalize_title("title"))
+        .drop("instructions", "ingredients")
+    )
+
+
+def read_layer2(spark: SparkSession) -> "DataFrame":  # noqa: F821
+    """
+    Lit layer2+.json et retourne un DataFrame staging avec :
+      - image_url  : URL de la première image (ou null)
+      - image_urls : liste de toutes les URLs d'images
+      - has_image  : booléen
+    """
+    return (
+        spark.read
+        .option("multiLine", True)
+        .schema(_LAYER2_SCHEMA)
+        .json(str(cfg.LAYER2_PATH))
+        .withColumn(
+            "image_url",
+            F.when(F.size("images") > 0, F.col("images")[0]["url"]),
+        )
+        .withColumn(
+            "image_urls",
+            F.transform("images", lambda x: x["url"]),
+        )
+        .withColumn("has_image", F.size("images") > 0)
+        .drop("images")
+    )
+
+
+def read_det_ingrs(spark: SparkSession) -> "DataFrame":  # noqa: F821
+    """
+    Lit det_ingrs.json et retourne un DataFrame staging avec :
+      - ingredients_validated    : liste des ingrédients dont valid == True
+      - n_ingredients_validated  : longueur de cette liste
+
+    Logique de filtrage :
+      1. arrays_zip fusionne les tableaux parallèles `ingredients` et `valid`
+         → [{"ingr_texts": "flour", "valid": true}, ...]
+      2. F.filter ne conserve que les éléments valides
+      3. F.transform extrait uniquement le texte
+    """
+    return (
+        spark.read
+        .option("multiLine", True)
+        .schema(_DET_INGRS_SCHEMA)
+        .json(str(cfg.DET_INGRS_PATH))
+        # Étape 1 : textes bruts extraits
+        .withColumn("ingr_texts", F.transform("ingredients", lambda x: x["text"]))
+        # Étape 2 : fusion des deux tableaux parallèles
+        .withColumn("zipped", F.arrays_zip("ingr_texts", "valid"))
+        # Étape 3 : filtrage + extraction du texte uniquement
+        .withColumn(
+            "ingredients_validated",
+            F.transform(
+                F.filter("zipped", lambda x: x["valid"] == True),  # noqa: E712
+                lambda x: F.lower(F.trim(x["ingr_texts"])),
+            ),
+        )
+        .withColumn("n_ingredients_validated", F.size("ingredients_validated"))
+        .drop("ingredients", "valid", "ingr_texts", "zipped")
+    )
+
+
+def read_nutrition(spark: SparkSession) -> "DataFrame":  # noqa: F821
+    """
+    Lit recipes_with_nutritional_info.json et aplatit le struct
+    nutr_values_per100g en colonnes individuelles.
+
+    Unités : kcal/100g (standard Nutri-Score européen).
+    → Cette source est la SEULE utilisée pour calculer le nutri_score.
+    """
+    return (
+        spark.read
+        .option("multiLine", True)
+        .schema(_NUTR_SCHEMA)
+        .json(str(cfg.NUTR_PATH))
+        .withColumn("energy_kcal",   F.col("nutr_values_per100g.energy"))
+        .withColumn("fat_g",         F.col("nutr_values_per100g.fat"))
+        .withColumn("protein_g",     F.col("nutr_values_per100g.protein"))
+        .withColumn("salt_g",        F.col("nutr_values_per100g.salt"))
+        .withColumn("saturates_g",   F.col("nutr_values_per100g.saturates"))
+        .withColumn("sugars_g",      F.col("nutr_values_per100g.sugars"))
+        .withColumn("title_norm",    _normalize_title("title"))
+        .drop("nutr_values_per100g", "title")
     )
 
 
 # ---------------------------------------------------------------------------
-# Ressources individuelles
+# Phase 1 : Écriture staging
 # ---------------------------------------------------------------------------
 
-@dlt.resource(
-    name="raw_layer1",
-    parallelized=True,
-    write_disposition="replace",
-    # columns= retiré : dlt infère le schéma automatiquement depuis les instances
-    # Layer1Staging yieldées. Passer columns= ET yielder des instances Pydantic
-    # crée un double-validateur conflictuel (contract_mode=freeze).
-    schema_contract={"columns": "evolve"},
-)
-def layer1(data_dir: str) -> Iterator[Layer1Staging]:
+def write_mit_staging(spark: SparkSession) -> None:
     """
-    Extrait les recettes brutes de layer1.json via ijson en streaming.
-    Yield des instances Layer1Staging — dlt appelle .model_dump() en interne.
+    Lit les 4 fichiers MIT et les écrit en Parquet dans STAGING_DIR.
+    C'est la Phase 1 du pipeline : on matérialise sur disque pour éviter
+    de relire les JSON à chaque jointure de la Phase 2.
     """
-    path = Path(data_dir) / "layer1.json"
-    if not path.exists():
-        raise FileNotFoundError(f"layer1.json introuvable dans {data_dir}")
+    read_layer1(spark).write.mode("overwrite").parquet(cfg.STAGING_LAYER1)
+    print("  ✅ layer1    → staging/layer1")
 
-    with open(path, "rb") as f:
-        for record in ijson.items(f, "item"):
-            ingredients_raw: list[str] = [
-                ing.get("text", "") for ing in record.get("ingredients", [])
-            ]
-            instructions_parts: list[str] = [
-                step.get("text", "") for step in record.get("instructions", [])
-            ]
+    read_layer2(spark).write.mode("overwrite").parquet(cfg.STAGING_LAYER2)
+    print("  ✅ layer2    → staging/layer2")
 
-            yield Layer1Staging(
-                id=record["id"],
-                title=record.get("title", ""),
-                url=record.get("url"),
-                partition=record.get("partition"),
-                ingredients_raw=ingredients_raw,
-                n_steps=len(instructions_parts),
-                instructions_text=" | ".join(filter(None, instructions_parts)),
-            )
+    read_det_ingrs(spark).write.mode("overwrite").parquet(cfg.STAGING_DET_INGRS)
+    print("  ✅ det_ingrs → staging/det_ingrs")
 
-
-@dlt.resource(
-    name="raw_layer2",
-    write_disposition="replace",
-    schema_contract={"columns": "evolve"},
-)
-def layer2(data_dir: str) -> Iterator[Layer2Staging]:
-    """Extrait les URLs d'images depuis layer2+.json via ijson en streaming."""
-    path = Path(data_dir) / "layer2+.json"
-    if not path.exists():
-        return  # layer2 est optionnel
-
-    with open(path, "rb") as f:
-        for record in ijson.items(f, "item"):
-            images: list[dict] = record.get("images", [])
-            image_urls: list[str] = [
-                img.get("url", "") for img in images if img.get("url")
-            ]
-
-            yield Layer2Staging(
-                id=record["id"],
-                image_urls=image_urls,
-                image_url=image_urls[0] if image_urls else None,
-                has_image=len(image_urls) > 0,
-            )
-
-
-@dlt.resource(
-    name="raw_det_ingrs",
-    write_disposition="replace",
-    schema_contract={"columns": "evolve"},
-)
-def det_ingrs(data_dir: str) -> Iterator[DetIngrStaging]:
-    """
-    Extrait les ingrédients validés depuis det_ingrs.json via ijson en streaming.
-    Logique équivalente au arrays_zip + F.filter de Spark, en Python pur.
-    """
-    path = Path(data_dir) / "det_ingrs.json"
-    if not path.exists():
-        return
-
-    with open(path, "rb") as f:
-        for record in ijson.items(f, "item"):
-            ingredients: list[dict] = record.get("ingredients", [])
-            valid_flags: list[bool] = record.get("valid", [])
-
-            validated: list[str] = [
-                ing.get("text", "").lower().strip()
-                for ing, is_valid in zip(ingredients, valid_flags)
-                if is_valid and ing.get("text")
-            ]
-
-            yield DetIngrStaging(
-                id=record["id"],
-                ingredients_validated=validated,
-                n_ingredients_validated=len(validated),
-            )
-
-
-@dlt.resource(
-    name="raw_nutrition",
-    write_disposition="replace",
-    schema_contract={"columns": "evolve"},
-)
-def nutrition(data_dir: str) -> Iterator[NutritionStaging]:
-    """
-    Extrait les valeurs nutritionnelles depuis le JSON MIT via ijson en streaming.
-    Unités : kcal/100g pour l'énergie (standard Nutri-Score européen).
-    """
-    path = Path(data_dir) / "recipes_with_nutritional_info.json"
-    if not path.exists():
-        return
-
-    with open(path, "rb") as f:
-        for record in ijson.items(f, "item"):
-            nutr = record.get("nutr_values_per100g", {})
-            yield NutritionStaging(
-                title=record.get("title", ""),
-                energy=_safe_float(nutr.get("energy")),
-                fat=_safe_float(nutr.get("fat")),
-                protein=_safe_float(nutr.get("protein")),
-                salt=_safe_float(nutr.get("salt")),
-                saturates=_safe_float(nutr.get("saturates")),
-                sugars=_safe_float(nutr.get("sugars")),
-            )
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _safe_float(value: object) -> float | None:
-    try:
-        return float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return None
+    read_nutrition(spark).write.mode("overwrite").parquet(cfg.STAGING_NUTR)
+    print("  ✅ nutrition → staging/nutrition")
