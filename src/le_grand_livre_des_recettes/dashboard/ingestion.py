@@ -49,7 +49,7 @@ def run_ingestion():
         con.execute("""
             PRAGMA create_fts_index(
                 'recipes_main', 'recipe_id', 'title', 'ingredients_validated',
-                stemmer='french', stopwords='none', lower=1, strip_accents=1, overwrite=1
+                stemmer='english', stopwords='none', lower=1, strip_accents=1, overwrite=1
             );
         """)
 
