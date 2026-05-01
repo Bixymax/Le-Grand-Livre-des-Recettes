@@ -1,23 +1,33 @@
 # Python
 __pycache__/
 *.py[cod]
+*.pyo
+.pytest_cache/
 *.egg-info/
-.venv/
 dist/
 build/
+.mypy_cache/
+.ruff_cache/
 
-# dlt — NE PAS committer les secrets
-.dlt/secrets.toml
+# Environnement
+.env
+.venv/
+venv/
 
-# Données brutes et outputs (trop lourds pour Git)
+# Données — ne pas committer les fichiers sources ni les outputs
 data/raw/
+data/staging/
 data/outputs/
 
+# Docker
+spark-logs/
+warehouse/
+
 # IDE
-.vscode/
 .idea/
+.vscode/
 *.swp
 
-# OS
-.DS_Store
-Thumbs.db
+# dlt
+.dlt/secrets.toml
+pipeline_state/

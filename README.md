@@ -1,169 +1,195 @@
-# 🍽️ Recipes Pipeline — dlt + DuckDB
+# Le Grand Livre des Recettes — Pipeline ETL
 
-Pipeline de data engineering pour le dataset MIT Recipe1M+ enrichi Food.com.
-Architecture ELT : extraction + chargement via **dlt**, transformation via **SQL DuckDB**.
+Pipeline ETL de données culinaires transformant **MIT Recipe1M+** et **Kaggle Food.com**
+en tables Parquet optimisées pour un moteur de recherche de recettes.
+
+- **Phase 1 — Ingestion** : `dlt` + `ijson` / `csv.DictReader` → lecture en streaming, normalisation Python, écriture Parquet (staging)
+- **Phase 2 — Transformation** : `PySpark` → jointures LEFT JOIN, enrichissement, 3 tables finales
 
 ---
 
 ## Architecture
 
 ```
-data/raw/                                      data/outputs/
-  layer1.json                  ─────┐            recipes_catalog.duckdb
-  layer2+.json                  ─────┤──dlt──▶     recipes.raw_layer1
-  det_ingrs.json                ─────┤             recipes.raw_layer2
-  recipes_with_nutritional_info.json ─┘            recipes.raw_det_ingrs
-  RAW_recipes.csv ──────────────────────────▶     recipes.raw_kaggle
-                                                    recipes.raw_nutrition
+data/raw/              (5 fichiers sources — non versionnés, voir data/raw/README.md)
+  ├── layer1.json
+  ├── layer2+.json
+  ├── det_ingrs.json
+  ├── recipes_with_nutritional_info.json
+  └── RAW_recipes.csv
 
-                                       SQL ──▶   recipes.v_assembled            (vue jointure)
-                                                    recipes.recipes_main         (table finale)
-                                                    recipes.ingredients_index    (table finale)
-                                                    recipes.recipes_nutrition_detail (table finale)
-```
+        │  Phase 1 — dlt  (ingestion / normalisation Python)
+        ▼
 
-> **Colonnes énergie dans `recipes_main` :**
-> | Colonne | Unité | Source | Usage |
-> |---|---|---|---|
-> | `mit_energy_kcal` | kcal / 100 g | MIT Recipe1M+ | Nutri-Score (standard européen) |
-> | `kaggle_energy_kcal` | kcal / portion | Food.com | Affichage uniquement |
->
-> Ces deux colonnes ne sont **jamais fusionnées** — leurs unités sont incompatibles.
-> Le Nutri-Score est calculé **exclusivement** sur `mit_energy_kcal`.
+data/staging/          (Parquets intermédiaires — auto-générés)
+  ├── layer1/
+  ├── layer2/
+  ├── det_ingrs/
+  ├── nutrition/
+  └── kaggle/
 
-### Pourquoi cette séparation ELT ?
+        │  Phase 2 — PySpark  (jointures LEFT JOIN + enrichissement)
+        ▼
 
-| Étape | Outil | Rôle |
-|-------|-------|------|
-| **Extract** | dlt `@resource` (Python pur) | Lire les JSON/CSV, normaliser inline |
-| **Load** | dlt `pipeline.run()` | Écrire vers DuckDB (dev) ou Delta (prod) |
-| **Transform** | SQL DuckDB | Jointures, enrichissements, index FTS |
-
-dlt gère le state, le schema, le retry et les logs.
-DuckDB gère les jointures sur 1M+ lignes en quelques secondes.
-
----
-
-## Structure
-
-```
-le_grand_livre_des_recettes/          ← racine du repo
-├── .dlt/
-│   ├── config.toml                   # Config pipeline (destination, chemins data_dir)
-│   └── secrets.toml                  # Credentials Kaggle / Delta (gitignored)
-├── src/
-│   └── le_grand_livre_des_recettes/
-│       └── pipeline/
-│           ├── sources/
-│           │   ├── mit_recipes.py    # @dlt.source : layer1, layer2, det_ingrs, nutrition
-│           │   └── kaggle_recipes.py # @dlt.source : RAW_recipes.csv
-│           ├── transformers/
-│           │   └── enrich.py         # Logique pure : nutri_score, cook_time_cat, coalesce_energy
-│           └── models/
-│               └── recipes.py        # Pydantic schemas — Raw*, *Staging (câblés dlt), Recipe*
-├── sql/
-│   ├── 01_assemble.sql               # Vue v_assembled (jointures en cascade MIT + Kaggle)
-│   └── 02_final_tables.sql           # 3 tables finales + index B-tree + FTS (stemmer english)
-├── tests/
-│   ├── fixtures/                     # Mini-dataset (3 recettes) pour les tests d'intégration
-│   │   ├── layer1.json
-│   │   ├── layer2+.json
-│   │   ├── det_ingrs.json
-│   │   ├── recipes_with_nutritional_info.json
-│   │   └── RAW_recipes.csv
-│   ├── conftest.py                   # Fixture session `pipeline_db` — pipeline complet sur fixtures
-│   ├── test_sources.py               # Tests unitaires : normalize_title, parse_list, parse_nutrition…
-│   ├── test_transformers.py          # Tests unitaires : nutri_score, cook_time_cat, coalesce_energy
-│   └── test_integration.py           # Tests d'intégration : staging, tables finales, sémantique énergie
-├── data/
-│   ├── raw/                          # Fichiers sources bruts (non versionné — trop volumineux)
-│   └── outputs/                      # recipes_catalog.duckdb (généré — gitignored)
-├── run_pipeline.py                   # CLI Typer : run / ingest / transform / info
-└── pyproject.toml
+data/outputs/parquets/ (tables finales — auto-générées)
+  ├── recipes_main/           partitionné par nutri_score
+  ├── ingredients_index/
+  └── recipes_nutrition_detail/
 ```
 
 ---
 
-## Installation
+## Prérequis
+
+- Docker + Docker Compose
+- 5 fichiers sources dans `data/raw/` — voir [`data/raw/README.md`](data/raw/README.md)
+
+---
+
+## Démarrage
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate          # Windows : .venv\Scripts\activate
-pip install -e ".[dev]"
-```
+# 1. Démarrer le cluster Spark
+docker compose up -d --build
 
-Placez vos fichiers sources dans `data/raw/` :
-```
-data/raw/
-  layer1.json
-  layer2+.json
-  det_ingrs.json
-  recipes_with_nutritional_info.json
-  RAW_recipes.csv
-```
+# 2. Ouvrir un shell dans le container master
+docker exec -it spark-master bash
 
----
-
-## Utilisation
-
-```bash
-# Pipeline complet (recommandé)
+# 3. (Dans le container) Lancer le pipeline complet
 python run_pipeline.py run
-
-# Étapes séparées
-python run_pipeline.py ingest      # dlt uniquement → staging
-python run_pipeline.py transform   # SQL uniquement → tables finales
-
-# Destination Delta Lake (production / futur streaming)
-python run_pipeline.py run --dest delta
-
-# Stats des tables finales
-python run_pipeline.py info
 ```
 
----
-
-## Tests
+Les commandes peuvent aussi être exécutées par phase :
 
 ```bash
-# Tous les tests (unitaires + intégration)
-pytest tests/ -v
-
-# Unitaires uniquement — aucune dépendance externe, très rapides
-pytest tests/test_sources.py tests/test_transformers.py -v
-
-# Intégration uniquement — lance le pipeline complet sur les mini-fixtures
-pytest tests/test_integration.py -v
-
-# Couverture de code
-pytest tests/ --cov=src/le_grand_livre_des_recettes/pipeline --cov-report=term-missing
+python run_pipeline.py ingest             # Phase 1 dlt uniquement
+python run_pipeline.py transform          # Phase 2 PySpark uniquement
+python run_pipeline.py transform --master spark://spark-master:7077
+python run_pipeline.py info               # Stats des tables finales
 ```
-
-### Deux niveaux de tests
-
-| Type | Fichier | Données requises | Vitesse |
-|------|---------|-----------------|---------|
-| **Unitaires** | `test_sources.py`, `test_transformers.py` | Aucune | < 1 s |
-| **Intégration** | `test_integration.py` | `tests/fixtures/` (3 recettes) | ~10 s |
-
-Les tests d'intégration couvrent :
-- Peuplement correct des tables staging (`raw_layer1`, `raw_layer2`, etc.)
-- Tables finales (`recipes_main`, `ingredients_index`, `recipes_nutrition_detail`)
-- **Sémantique énergie** : `nutri_score` calculé uniquement sur `mit_energy_kcal` (kcal/100g), jamais sur `kaggle_energy_kcal` (kcal/portion)
-- Exclusion des ingrédients `valid=False` de l'index
-- Pattern de filtre AND/OR sur `ingredients_index`
-
-La fixture `pipeline_db` (scope `session`) tourne le pipeline complet une seule fois,
-peu importe le nombre de classes de test qui la consomment.
 
 ---
 
-## Vers le streaming (prochaine étape)
+## Commandes Makefile
 
-La séparation `@dlt.resource` / SQL est pensée pour le streaming :
+| Commande | Description |
+|----------|-------------|
+| `make down` | Arrêt du cluster, suppression des outputs et de l'image |
+| `make logs` | Suivi des logs du master |
+| `make clean-data` | Supprime `data/staging/` et `data/outputs/` |
 
-1. **Passer `write_disposition="append"`** dans les resources → dlt gère l'état incrémental
-2. **Activer le Delta Change Data Feed** sur les tables finales → les consumers streaming
-   peuvent lire uniquement les deltas
-3. **Remplacer la destination `duckdb` par `filesystem` (Delta)** pour un stockage
-   compatible Spark Structured Streaming / Kafka Connect
+---
+
+## UI
+
+| Service | URL |
+|---------|-----|
+| Spark Master | http://localhost:8080 |
+| Spark Application | http://localhost:4040 |
+| Spark History Server | http://localhost:18080 |
+
+---
+
+## Tables de sortie
+
+### `recipes_main`
+
+Une ligne par recette. Partitionné physiquement par `nutri_score` pour accélérer
+les requêtes filtrées côté moteur de recherche.
+
+| Colonne | Type | Description |
+|---------|------|-------------|
+| `recipe_id` | string | ID MIT Recipe1M+ |
+| `title` | string | Titre de la recette |
+| `description` | string | Description Kaggle |
+| `instructions_text` | string | Instructions concaténées (`" \| "`) |
+| `ingredients_raw` | array[string] | Ingrédients bruts MIT |
+| `ingredients_validated` | array[string] | Ingrédients validés MIT |
+| `n_ingredients_validated` | int | Nombre d'ingrédients validés |
+| `n_steps` | int | Nombre d'étapes (source MIT) |
+| `cook_minutes` | int | Temps de cuisson Kaggle |
+| `cook_time_category` | string | `rapide` / `moyen` / `long` / `inconnu` |
+| `image_url` | string | URL de la première image |
+| `image_urls` | array[string] | Toutes les URLs d'images |
+| `has_image` | bool | Au moins une image disponible |
+| `source_url` | string | URL de la page recette MIT |
+| `mit_energy_kcal` | float | Énergie kcal/100g (MIT) → Nutri-Score |
+| `kaggle_energy_kcal` | float | Énergie kcal/portion (Kaggle) → affichage |
+| `nutri_score` | string | A / B / C / D / E (basé sur `mit_energy_kcal`) |
+| `tags` | array[string] | Tags Kaggle |
+
+### `ingredients_index`
+
+Une ligne par *(recette × ingrédient)*. Permet des requêtes de filtrage par
+ingrédient sans scanner les arrays de `recipes_main`.
+
+| Colonne | Type |
+|---------|------|
+| `recipe_id` | string |
+| `title` | string |
+| `nutri_score` | string |
+| `image_url` | string |
+| `cook_time_category` | string |
+| `ingredient` | string |
+
+### `recipes_nutrition_detail`
+
+Macronutriments g/100g par recette (source MIT uniquement). Ne contient que les
+recettes avec au moins une valeur renseignée.
+
+| Colonne | Type |
+|---------|------|
+| `recipe_id` | string |
+| `fat_g` | float |
+| `protein_g` | float |
+| `salt_g` | float |
+| `saturates_g` | float |
+| `sugars_g` | float |
+
+---
+
+## Structure du projet
+
+```
+recipes-pipeline/
+├── src/le_grand_livre_des_recettes/pipeline/
+│   ├── config.py               Chemins, paramètres Spark, write_disposition dlt
+│   ├── ingest.py               Orchestrateur Phase 1 (dlt)
+│   ├── spark_session.py        Factory SparkSession (batch + streaming)
+│   ├── models/
+│   │   └── schemas.py          Contrats Pydantic (documentation)
+│   ├── sources/
+│   │   ├── _utils.py           normalize_title + log_progress (partagés)
+│   │   ├── mit_recipes.py      dlt resources — MIT Recipe1M+
+│   │   └── kaggle_recipes.py   dlt resource — Kaggle Food.com
+│   └── transformers/
+│       ├── assemble.py         Chargement Parquet + jointures
+│       └── enrich.py           Colonnes dérivées + écriture tables finales
+├── conf/spark-defaults.conf
+├── sql/                        Référence DuckDB (ancienne implémentation)
+├── data/raw/README.md          Instructions d'obtention des fichiers sources
+├── .dlt/config.toml
+├── docker-compose.yml
+├── Dockerfile
+├── entrypoint.sh
+├── Makefile
+├── pyproject.toml
+├── requirements.txt
+└── run_pipeline.py             CLI Typer (entrypoint Docker)
+```
+
+---
+
+## Chargement incrémental en production
+
+Quand la base est en production et que de nouvelles recettes doivent être ajoutées,
+il suffit de changer une constante dans `config.py` :
+
+```python
+# config.py
+DLT_WRITE_DISPOSITION: str = "append"   # au lieu de "replace"
+```
+
+dlt ajoutera les nouveaux enregistrements sans écraser les données existantes.
+La Phase 2 (PySpark) reste inchangée — elle relit le staging complet et réécrit
+les tables finales en `overwrite`, ce qui consolide les données anciennes et nouvelles.

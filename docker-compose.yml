@@ -5,22 +5,24 @@ services:
     image: spark-image
     entrypoint: ['./entrypoint.sh', 'master']
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8080" ]
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
       interval: 5s
       timeout: 3s
       retries: 3
     volumes:
-      - ./scripts:/opt/spark/scripts
-      - ./data:/opt/spark/data
+      - ./data:/opt/spark/data               # raw + staging + outputs
+      - ./src:/opt/spark/src                 # package Python du pipeline
+      - ./run_pipeline.py:/opt/spark/run_pipeline.py
+      - ./.dlt:/opt/spark/.dlt               # config dlt (destination, pipeline name)
       - ./spark-logs:/opt/spark/spark-events
       - ./warehouse:/opt/spark/warehouse
     env_file:
       - .env.spark
     ports:
-      - '8080:8080' # Spark master Web UI
-      - '7077:7077' # For spark-node-to-spark-node queries
-      - '4040:4040' # Spark worker data
-      - '8889:8889' # Optionaly - Jupyter web UI
+      - '8080:8080'    # Spark Master Web UI
+      - '7077:7077'    # Spark intra-cluster
+      - '4040:4040'    # Spark Application UI
+      - '8889:8889'    # Jupyter (optionnel)
 
   spark-history-server:
     container_name: spark-history
@@ -31,8 +33,6 @@ services:
     env_file:
       - .env.spark
     volumes:
-      - ./scripts:/opt/spark/scripts
-      - ./data:/opt/spark/data
       - ./spark-logs:/opt/spark/spark-events
       - ./warehouse:/opt/spark/warehouse
     ports:
@@ -47,8 +47,8 @@ services:
     env_file:
       - .env.spark
     volumes:
-      - ./scripts:/opt/spark/scripts
       - ./data:/opt/spark/data
+      - ./src:/opt/spark/src
       - ./spark-logs:/opt/spark/spark-events
       - ./warehouse:/opt/spark/warehouse
 

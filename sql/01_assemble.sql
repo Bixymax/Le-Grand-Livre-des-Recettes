@@ -1,14 +1,12 @@
 -- =============================================================================
--- 01_assemble.sql — v7 (Anti-OOM avec Checkpoints Parquet)
+-- 01_assemble.sql — Référence DuckDB (ancienne implémentation)
+-- Ce fichier est conservé à titre documentaire uniquement.
+-- La logique équivalente est implémentée en PySpark dans :
+--   pipeline/transformers/assemble.py
 -- =============================================================================
 
 CREATE OR REPLACE MACRO normalize_title(t) AS
     lower(trim(regexp_replace(t, '[^a-zA-Z0-9\s]', '', 'g')));
-
--- =============================================================================
--- ÉTAPE 1 : Matérialisation physique sur disque (force le vidage de la RAM)
--- L'utilisation d'un ORDER BY dans un sous-select soulage la RAM de DuckDB.
--- =============================================================================
 
 COPY (
     SELECT *, normalize_title(title) AS title_norm
@@ -39,10 +37,6 @@ COPY (
     GROUP BY _dlt_parent_id
 ) TO 'data/outputs/tmp/tmp_det_ingrs.parquet' (FORMAT PARQUET);
 
-
--- =============================================================================
--- ÉTAPE 2 : Assemblage final en streaming depuis les fichiers Parquet
--- =============================================================================
 DROP TABLE IF EXISTS recipes.v_assembled;
 
 CREATE TABLE recipes.v_assembled AS
@@ -85,9 +79,6 @@ SELECT *
 FROM RawAssembled
 QUALIFY ROW_NUMBER() OVER (PARTITION BY recipe_id ORDER BY recipe_id) = 1;
 
--- =============================================================================
--- ÉTAPE 3 : Sanity check
--- =============================================================================
 SELECT
     COUNT(*)                                                       AS total_recipes,
     ROUND(100.0 * COUNT(image_url)       / COUNT(*), 1)            AS pct_image,

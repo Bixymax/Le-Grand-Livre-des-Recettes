@@ -1,3 +1,6 @@
+-- Référence DuckDB (ancienne implémentation) — conservé à titre documentaire.
+-- Logique équivalente : pipeline/transformers/enrich.py
+
 -- =============================================================================
 -- 02_final_tables.sql — v4
 -- Création des 3 tables finales + infrastructure de recherche par ingrédient.

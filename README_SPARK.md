@@ -1,16 +1,15 @@
 # Pipeline Recipes — PySpark
 
-Remplacement du pipeline `dlt + DuckDB` par un pipeline **PySpark pur**.
-
 ## Architecture
 
 ```
-Phase 1 — Ingestion (ingest)
+Phase 1 — Ingestion (dlt)
   data/raw/*.json + *.csv
-      ↓  Spark readers avec schémas explicites
+      ↓  dlt resources (normalisation Python, streaming ijson / csv.DictReader)
   data/staging/*.parquet
+      layer1/  layer2/  det_ingrs/  nutrition/  kaggle/
 
-Phase 2 — Transformation (transform)
+Phase 2 — Transformation (PySpark)
   data/staging/*.parquet
       ↓  Jointures LEFT JOIN + enrichissement
   data/outputs/parquets/
@@ -21,33 +20,25 @@ Phase 2 — Transformation (transform)
 
 ## Lancement
 
-### Cluster Docker (recommandé)
 ```bash
 # 1. Démarrer le cluster
-docker-compose up
+docker compose up -d --build
 
-# 2. Depuis le master node OU depuis l'hôte avec SPARK_MASTER_URL :
-export SPARK_MASTER_URL=spark://spark-master:7077
+# 2. Entrer dans le container master
+docker exec -it spark-master bash
 
-# Pipeline complet
-python run_pipeline.py run
-
-# Ou avec l'option --master
-python run_pipeline.py run --master spark://spark-master:7077
-```
-
-### Mode local (dev / tests)
-```bash
-# Aucune variable d'env nécessaire — utilise local[*] par défaut
+# 3. Lancer le pipeline
 python run_pipeline.py run
 ```
 
 ### Commandes disponibles
+
 ```bash
-python run_pipeline.py run        # Phase 1 + Phase 2
-python run_pipeline.py ingest     # Phase 1 uniquement (staging)
-python run_pipeline.py transform  # Phase 2 uniquement (tables finales)
-python run_pipeline.py info       # stats sur les tables finales
+python run_pipeline.py run                                    # Phase 1 + Phase 2
+python run_pipeline.py ingest                                 # Phase 1 uniquement (staging)
+python run_pipeline.py transform                              # Phase 2 uniquement (tables finales)
+python run_pipeline.py transform --master spark://spark-master:7077
+python run_pipeline.py info                                   # stats sur les tables finales
 ```
 
 ## Structure du projet
@@ -55,24 +46,26 @@ python run_pipeline.py info       # stats sur les tables finales
 ```
 run_pipeline.py                            ← entrypoint CLI
 src/le_grand_livre_des_recettes/pipeline/
+  config.py                                ← chemins et paramètres centralisés
+  ingest.py                                ← orchestrateur dlt (Phase 1)
   spark_session.py                         ← factory SparkSession
-  config.py                                ← chemins centralisés
   sources/
-    mit_recipes.py                         ← lecture layer1/2, det_ingrs, nutrition
-    kaggle_recipes.py                      ← lecture RAW_recipes.csv
+    _utils.py                              ← normalize_title, log_progress (partagés)
+    mit_recipes.py                         ← dlt resources — layer1/2, det_ingrs, nutrition
+    kaggle_recipes.py                      ← dlt resource — RAW_recipes.csv
   transformers/
-    assemble.py                            ← jointures (Phase 2a)
-    enrich.py                              ← nutri_score + 3 tables finales (Phase 2b)
+    assemble.py                            ← chargement Parquet + jointures (Phase 2a)
+    enrich.py                              ← colonnes dérivées + 3 tables finales (Phase 2b)
   models/
-    recipes.py                             ← schémas Pydantic (documentation)
+    schemas.py                             ← schémas Pydantic (documentation)
 ```
 
 ## Tables finales
 
 | Table | Granularité | Partitionnement |
 |---|---|---|
-| `recipes_main` | 1 ligne / recette | `nutri_score` (A-E) |
-| `ingredients_index` | 1 ligne / (recette, ingrédient) | aucun |
+| `recipes_main` | 1 ligne / recette | `nutri_score` (A–E) |
+| `ingredients_index` | 1 ligne / (recette × ingrédient) | aucun |
 | `recipes_nutrition_detail` | 1 ligne / recette avec données MIT | aucun |
 
 ## Nutri-Score
@@ -87,3 +80,11 @@ Calculé **uniquement** sur `mit_energy_kcal` (kcal/100g, source MIT).
 | C | 160–269 |
 | D | 270–399 |
 | E | ≥ 400 |
+
+## Chargement incrémental en production
+
+Changer dans `config.py` :
+```python
+DLT_WRITE_DISPOSITION: str = "append"  # au lieu de "replace"
+```
+dlt ajoutera les nouvelles recettes sans écraser les données existantes.

@@ -27,7 +27,7 @@ ENV SPARK_MASTER_PORT=7077
 ENV SPARK_MASTER_HOST=spark-master
 ENV SPARK_MASTER="spark://$SPARK_MASTER_HOST:$SPARK_MASTER_PORT"
 
-ENV PYTHONPATH=$SPARK_HOME/python/:$PYTHONPATH
+ENV PYTHONPATH=$SPARK_HOME/python/:$SPARK_HOME:$SPARK_HOME/src:$PYTHONPATH
 ENV PYSPARK_PYTHON=python3
 
 # Add iceberg spark runtime jar to IJava classpath
@@ -54,6 +54,9 @@ COPY conf/spark-defaults.conf "$SPARK_HOME/conf/"
 
 
 FROM spark-base AS pyspark
+
+# setuptools is required by dlt (pkg_resources) and must be present before other deps
+RUN pip3 install --upgrade setuptools
 
 # Install python deps
 COPY requirements.txt .
@@ -99,8 +102,4 @@ ENTRYPOINT ["/opt/spark/entrypoint.sh"]
 # Now go to interactive shell mode
 # -$ docker exec -it spark-master /bin/bash
 # then execute
-# -$ pyspark
-
-# If Jupyter is installed, you will see an URL: `http://127.0.0.1:8889/?token=...`
-# This will open Jupyter web UI in your host machine browser.
-# Then go to /warehouse/ and test the installation.
+# -$ python run_pipeline.py run

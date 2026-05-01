@@ -1,30 +1,21 @@
 # .dlt/config.toml
-# Valeurs non-sensibles — les secrets vont dans secrets.toml (gitignored)
+# Non-sensitive configuration — secrets go in secrets.toml (gitignored).
 
 [runtime]
 log_level = "INFO"
 
-[pipeline]
-pipeline_name = "recipes_pipeline"
-dataset_name  = "recipes"
-
-# --- Destinations ---
-# Commuter entre "duckdb" (dev local) et "filesystem" (delta, prod)
-# via la variable d'env DESTINATION ou directement ici.
-[destination.duckdb]
-database = "data/outputs/recipes_catalog.duckdb"
-
+# ---------------------------------------------------------------------------
+# Destination : local filesystem → Parquet
+# Files are written to data/staging/{table_name}/{file_id}.parquet
+# PySpark reads these directories directly in Phase 2.
+# ---------------------------------------------------------------------------
 [destination.filesystem]
-bucket_url  = "data/outputs/delta"  # chemin local ou s3://...
-layout      = "{table_name}"
+bucket_url = "data"
+layout     = "{table_name}/{file_id}.parquet"
 
-[destination.filesystem.deltalake]
-# Active le format Delta sur la destination filesystem
-target_file_size = 104857600  # 100 MB par fichier
-
-# --- Sources ---
-[sources.mit_recipes]
-data_dir = "data/raw"
-
-[sources.kaggle_recipes]
-data_dir = "data/raw"
+# ---------------------------------------------------------------------------
+# Data writer limits — split large tables into multiple files
+# ---------------------------------------------------------------------------
+[normalize.data_writer]
+file_max_items = 500000
+file_max_bytes = 52428800   # 50 MB

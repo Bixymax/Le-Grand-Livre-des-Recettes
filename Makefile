@@ -1,3 +1,5 @@
+.PHONY: up down dev
+
 up:
 	docker compose up -d --build
 

@@ -1,85 +1,107 @@
 """
-Source PySpark pour le dataset Food.com / Kaggle (RAW_recipes.csv).
+Source dlt — dataset Food.com / Kaggle (RAW_recipes.csv).
 
-Les colonnes `tags` et `nutrition` sont stockées comme des chaînes de
-caractères Python (ex: "['tag1', 'tag2']"). On les normalise ici avec
-des regexp_replace + split identiques au notebook Databricks original.
-
-ATTENTION — unité énergie :
-  `kaggle_energy_kcal` est en kcal/PORTION (premier élément du champ
-  `nutrition` de Food.com), pas en kcal/100g.
-  Elle NE DOIT PAS être utilisée pour calculer le Nutri-Score.
-  Utiliser `energy_kcal` (source MIT, kcal/100g) à la place.
+Lecture ligne par ligne avec ``csv.DictReader`` — aucun chargement en mémoire.
+Le dédoublonnage sur ``title_norm`` est effectué ici plutôt qu'en Phase 2 pour
+éviter de propager des doublons inutiles dans le staging.
 """
 
 from __future__ import annotations
 
-from pyspark.sql import SparkSession
-from pyspark.sql import functions as F
-from pyspark.sql.types import FloatType, IntegerType, StringType
+import csv
+import re
+import time
 
-from src.le_grand_livre_des_recettes.pipeline import config as cfg
+import dlt
+
+from le_grand_livre_des_recettes.pipeline import config as cfg
+from le_grand_livre_des_recettes.pipeline.sources._utils import log_progress, normalize_title
 
 
-def read_kaggle(spark: SparkSession) -> "DataFrame":  # noqa: F821
+def _parse_list_str(raw: str) -> list[str]:
     """
-    Lit RAW_recipes.csv et normalise les colonnes complexes.
+    Convertit une chaîne au format ``"['tag1', 'tag2']"`` en liste Python.
 
-    Transformations :
-      - tags_raw   : chaîne "['tag1', 'tag2']" → Array[String] Spark
-      - title_norm : clé de jointure identique à celle de mit_recipes.py
-      - kaggle_energy_kcal : premier élément de la colonne `nutrition`
-        (kcal/portion, ≠ kcal/100g)
+    Parameters
+    ----------
+    raw:
+        Chaîne brute issue du CSV Kaggle (colonne ``tags`` ou similaire).
     """
-    return (
-        spark.read
-        .option("header", True)
-        .option("inferSchema", True)
-        .option("multiLine", True)
-        .option("escape", '"')
-        .csv(str(cfg.RAW_CSV_PATH))
-        .select(
-            F.col("id").cast(StringType()).alias("kaggle_id"),
-            F.col("minutes").cast(IntegerType()).alias("cook_minutes"),
-            F.col("tags").alias("tags_raw"),
-            F.col("nutrition").alias("nutrition_raw"),
-            F.col("n_steps").cast(IntegerType()),
-            F.col("description"),
-            F.col("name").alias("name_kaggle"),
-        )
-        # Nettoyage "['tag1', 'tag2']" → ["tag1", "tag2"]
-        .withColumn(
-            "tags",
-            F.split(
-                F.regexp_replace(
-                    F.regexp_replace("tags_raw", r"[\[\]']", ""),
-                    r",\s+",
-                    ",",
-                ),
-                ",",
-            ),
-        )
-        # Clé de jointure normalisée — reproduit exactement la logique MIT
-        .withColumn(
-            "title_norm",
-            F.lower(F.trim(F.regexp_replace("name_kaggle", r"[^a-zA-Z0-9\s]", ""))),
-        )
-        # Premier élément de "[kcal, fat, sugar, ...]" → kaggle_energy_kcal (kcal/portion)
-        .withColumn(
-            "nutrition_array",
-            F.split(F.regexp_replace("nutrition_raw", r"[\[\]]", ""), ","),
-        )
-        .withColumn(
-            "kaggle_energy_kcal",
-            F.col("nutrition_array")[0].cast(FloatType()),
-        )
-        .drop("tags_raw", "name_kaggle", "nutrition_array", "nutrition_raw")
-        # Dédoublonnage par title_norm (même logique que le notebook Databricks)
-        .dropDuplicates(["title_norm"])
-    )
+    if not raw:
+        return []
+    cleaned = re.sub(r"[\[\]'\"]", "", raw)
+    return [t.strip() for t in re.split(r",\s*", cleaned) if t.strip()]
 
 
-def write_kaggle_staging(spark: SparkSession) -> None:
-    """Lit RAW_recipes.csv et écrit le Parquet staging."""
-    read_kaggle(spark).write.mode("overwrite").parquet(cfg.STAGING_KAGGLE)
-    print("  ✅ kaggle    → staging/kaggle")
+def _parse_nutrition(raw: str) -> float | None:
+    """
+    Extrait la première valeur (kcal/portion) de la chaîne nutritionnelle Kaggle.
+
+    Le format Kaggle est ``"[kcal, fat, sugar, sodium, protein, saturated, carbs]"``.
+    Seule la première valeur (calories) est utilisée.
+
+    Parameters
+    ----------
+    raw:
+        Chaîne brute de la colonne ``nutrition``.
+    """
+    if not raw:
+        return None
+    cleaned = re.sub(r"[\[\]]", "", raw)
+    try:
+        return float(cleaned.split(",")[0].strip())
+    except (ValueError, IndexError):
+        return None
+
+
+@dlt.resource(
+    name="kaggle",
+    write_disposition=cfg.DLT_WRITE_DISPOSITION,
+    columns={"tags": {"data_type": "complex"}},
+)
+def kaggle_resource() -> None:
+    """
+    Lit RAW_recipes.csv ligne par ligne et yield des dicts normalisés.
+
+    Le dédoublonnage sur ``title_norm`` est effectué en mémoire via un set.
+    Pour des fichiers dépassant plusieurs millions de lignes, envisager
+    un filtre basé sur un Bloom filter externe.
+
+    Yields
+    ------
+    dict
+        Champs : kaggle_id, cook_minutes, n_steps, description, tags (list[str]),
+        title_norm, kaggle_energy_kcal (kcal/portion — différent du MIT kcal/100g).
+    """
+    print(f"  → kaggle : lecture de {cfg.RAW_CSV_PATH} ...", flush=True)
+    t0 = time.perf_counter()
+    seen_titles: set[str] = set()
+    count = 0
+
+    with open(cfg.RAW_CSV_PATH, encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            title_norm = normalize_title(row.get("name", ""))
+            if not title_norm or title_norm in seen_titles:
+                continue
+            seen_titles.add(title_norm)
+
+            yield {
+                "kaggle_id":          row.get("id"),
+                "cook_minutes":       int(row["minutes"]) if row.get("minutes", "").isdigit() else None,
+                "n_steps":            int(row["n_steps"]) if row.get("n_steps", "").isdigit() else None,
+                "description":        row.get("description") or None,
+                "tags":               _parse_list_str(row.get("tags", "")),
+                "title_norm":         title_norm,
+                "kaggle_energy_kcal": _parse_nutrition(row.get("nutrition", "")),
+            }
+            count += 1
+            log_progress("kaggle", count, t0)
+
+    print(f"  ✅ kaggle : {count:,} recettes en {time.perf_counter() - t0:.1f}s", flush=True)
+
+
+@dlt.source(name="kaggle_recipes")
+def kaggle_source():
+    """Source dlt pour le dataset Kaggle Food.com."""
+    return kaggle_resource()

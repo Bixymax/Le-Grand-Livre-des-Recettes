@@ -1,13 +1,10 @@
 """
 Factory de SparkSession pour le pipeline recipes.
 
-La session est configurée pour fonctionner dans trois contextes :
-  1. Cluster Docker Spark  → master = spark://spark-master:7077
-  2. Session Jupyter déjà active sur le master node → getOrCreate() la récupère
-  3. Mode local (tests / dev machine sans Docker) → master = local[*]
-
 Priorité du master URL :
-  argument explicite > variable d'env SPARK_MASTER_URL > local[*]
+  1. Argument explicite ``master=``
+  2. Variable d'environnement ``SPARK_MASTER_URL``
+  3. Fallback : ``local[*]``  (dev / CI sans cluster)
 """
 
 from __future__ import annotations
@@ -26,15 +23,11 @@ def get_or_create_spark(
 
     Parameters
     ----------
-    app_name : str
+    app_name:
         Nom visible dans l'UI Spark (localhost:8080 / history server).
-    master : str | None
-        URL du master Spark. Si None, utilise la variable d'env
-        SPARK_MASTER_URL, ou "local[*]" en dernier recours.
-
-    Returns
-    -------
-    SparkSession
+    master:
+        URL du master Spark. Si ``None``, consulte ``SPARK_MASTER_URL``,
+        puis utilise ``local[*]`` en dernier recours.
     """
     resolved_master = master or os.environ.get("SPARK_MASTER_URL", "local[*]")
 
@@ -42,16 +35,11 @@ def get_or_create_spark(
         SparkSession.builder
         .appName(app_name)
         .master(resolved_master)
-        # Sérialisation Kryo : plus rapide que Java par défaut
+        .config("spark.driver.memory", "4g")
+        .config("spark.executor.memory", "1g")
         .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-        # Désactive le broadcast auto pour les grands datasets
-        .config("spark.sql.autoBroadcastJoinThreshold", "-1")
-        # Shuffle partitions : 8 correspond au N_PARTITIONS du notebook Databricks
         .config("spark.sql.shuffle.partitions", "8")
         .getOrCreate()
     )
-
-    # Niveau de log : WARNING pour éviter le bruit dans les notebooks
     spark.sparkContext.setLogLevel("WARN")
-
     return spark
