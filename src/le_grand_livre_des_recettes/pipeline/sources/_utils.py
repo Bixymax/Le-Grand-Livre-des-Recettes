@@ -1,6 +1,4 @@
-"""
-Utilitaires partagés entre les sources dlt.
-"""
+"""Utilitaires partagés pour les sources DLT."""
 
 from __future__ import annotations
 
@@ -9,40 +7,25 @@ import time
 
 
 def normalize_title(title: str) -> str:
-    """
-    Normalise un titre de recette pour créer une clé de jointure robuste.
+    """Génère une clé de jointure normalisée à partir d'un titre brut.
 
-    Supprime la ponctuation, passe en minuscules et retire les espaces superflus.
-    Indispensable pour fiabiliser les jointures entre datasets hétérogènes
-    (MIT Recipe1M+ vs Kaggle Food.com).
+    Args:
+        title: Titre original de la recette.
 
-    Parameters
-    ----------
-    title:
-        Titre brut tel qu'il apparaît dans le fichier source.
-
-    Returns
-    -------
-    str
-        Titre normalisé, ex. ``"Chicken & Rice!"`` → ``"chicken  rice"``.
+    Returns:
+        Titre nettoyé (minuscules, caractères alphanumériques et espaces uniquement).
     """
     return re.sub(r"[^a-zA-Z0-9\s]", "", title or "").lower().strip()
 
 
 def log_progress(name: str, count: int, t0: float, every: int = 50_000) -> None:
-    """
-    Affiche la progression de la lecture d'un fichier source tous les *every* enregistrements.
+    """Affiche la progression du traitement par lots sur la sortie standard.
 
-    Parameters
-    ----------
-    name:
-        Nom de la ressource (ex. ``"layer1"``).
-    count:
-        Nombre d'enregistrements traités jusqu'ici.
-    t0:
-        Timestamp de début (``time.perf_counter()``).
-    every:
-        Intervalle d'affichage.
+    Args:
+        name: Identifiant de la ressource en cours de traitement.
+        count: Nombre d'enregistrements traités.
+        t0: Timestamp initial de référence (généré via time.perf_counter()).
+        every: Intervalle de déclenchement de l'affichage.
     """
     if count > 0 and count % every == 0:
         elapsed = time.perf_counter() - t0

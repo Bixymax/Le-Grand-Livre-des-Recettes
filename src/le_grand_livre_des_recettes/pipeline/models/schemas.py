@@ -1,59 +1,43 @@
-"""
-Schémas Pydantic du pipeline — documentation des contrats de données.
-
-Ces modèles ne sont pas utilisés à l'exécution du pipeline PySpark.
-Ils servent de référence documentaire pour les formats de fichiers sources
-et les tables finales produites, et peuvent être utilisés pour valider
-des échantillons de données en tests ou dans un notebook d'exploration.
-"""
+"""Schémas Pydantic documentant les contrats de données du pipeline."""
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
 
-# =============================================================================
-# Sources brutes — format des fichiers d'entrée
-# =============================================================================
-
 class Layer1Raw(BaseModel):
-    """Enregistrement issu de layer1.json (MIT Recipe1M+)."""
-
+    """Modèle des données d'entrée issues de layer1.json."""
     id: str
     title: str
     url: Optional[str] = None
     partition: Optional[str] = None
-    ingredients: list[dict] = Field(default_factory=list)
-    instructions: list[dict] = Field(default_factory=list)
+    ingredients: list[dict[str, Any]] = Field(default_factory=list)
+    instructions: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class Layer2Raw(BaseModel):
-    """Enregistrement issu de layer2+.json (images)."""
-
+    """Modèle des données d'entrée issues de layer2+.json."""
     id: str
-    images: list[dict] = Field(default_factory=list)
+    images: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class DetIngrsRaw(BaseModel):
-    """Ingrédients validés depuis det_ingrs.json."""
-
+    """Modèle des ingrédients validés issus de det_ingrs.json."""
     id: str
-    ingredients: list[dict] = Field(default_factory=list)
+    ingredients: list[dict[str, Any]] = Field(default_factory=list)
     valid: list[bool] = Field(default_factory=list)
 
 
 class NutritionRaw(BaseModel):
-    """Enregistrement issu de recipes_with_nutritional_info.json."""
-
+    """Modèle nutritionnel issu de recipes_with_nutritional_info.json."""
     title: str
-    nutr_values_per100g: dict = Field(default_factory=dict)
+    nutr_values_per100g: dict[str, Any] = Field(default_factory=dict)
 
 
 class KaggleRaw(BaseModel):
-    """Enregistrement issu de RAW_recipes.csv (Food.com / Kaggle)."""
-
+    """Modèle des données d'entrée issues de RAW_recipes.csv."""
     name: str
     minutes: Optional[int] = None
     tags: Optional[str] = None
@@ -63,17 +47,8 @@ class KaggleRaw(BaseModel):
     n_ingredients: Optional[int] = None
 
 
-# =============================================================================
-# Tables finales — contrat des outputs Parquet
-# =============================================================================
-
 class RecipeMain(BaseModel):
-    """
-    Table ``recipes_main`` — une ligne par recette.
-
-    Partitionnée physiquement par ``nutri_score``.
-    """
-
+    """Contrat de la table recipes_main (partitionnement physique par nutri_score)."""
     recipe_id: str
     title: str
     description: Optional[str] = None
@@ -88,19 +63,14 @@ class RecipeMain(BaseModel):
     image_urls: list[str] = Field(default_factory=list)
     has_image: bool = False
     source_url: Optional[str] = None
-    mit_energy_kcal: Optional[float] = None      # kcal/100g  → Nutri-Score
-    kaggle_energy_kcal: Optional[float] = None   # kcal/portion → affichage uniquement
-    nutri_score: Optional[str] = None            # calculé sur mit_energy_kcal
+    mit_energy_kcal: Optional[float] = None
+    kaggle_energy_kcal: Optional[float] = None
+    nutri_score: Optional[str] = None
     tags: list[str] = Field(default_factory=list)
 
 
 class IngredientIndex(BaseModel):
-    """
-    Table ``ingredients_index`` — une ligne par (recette × ingrédient).
-
-    Permet le filtrage rapide par ingrédient sans scanner les arrays.
-    """
-
+    """Contrat de la table ingredients_index."""
     recipe_id: str
     title: str
     nutri_score: Optional[str] = None
@@ -110,12 +80,7 @@ class IngredientIndex(BaseModel):
 
 
 class RecipeNutritionDetail(BaseModel):
-    """
-    Table ``recipes_nutrition_detail`` — détail nutritionnel par recette.
-
-    Toutes les valeurs en g/100g (source MIT uniquement).
-    """
-
+    """Contrat de la table recipes_nutrition_detail (valeurs exprimées en g/100g)."""
     recipe_id: str
     fat_g: Optional[float] = None
     protein_g: Optional[float] = None
