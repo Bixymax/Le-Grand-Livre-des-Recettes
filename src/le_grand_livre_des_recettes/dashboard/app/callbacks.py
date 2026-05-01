@@ -155,8 +155,8 @@ def _fetch_recipe_by_id(recipe_id: str) -> pd.DataFrame:
     """Récupère toutes les données nécessaires pour l'affichage d'une recette."""
     return con.execute(f"""
         SELECT {RECIPE_COLS}
-        FROM recipes.recipes_main m
-        LEFT JOIN recipes.recipes_nutrition_detail n ON m.recipe_id = n.recipe_id
+        FROM recipes_main m
+        LEFT JOIN recipes_nutrition n ON m.recipe_id = n.recipe_id
         WHERE m.recipe_id = ?
         LIMIT 1
     """, [recipe_id]).df()
@@ -379,9 +379,9 @@ def register_callbacks(app: dash.Dash):
                                                  title,
                                                  nutri_score,
                                                  cook_time_category,
-                                                 fts_recipes_recipes_main.match_bm25(recipe_id, ?) AS score
-                                          FROM recipes.recipes_main
-                                          WHERE fts_recipes_recipes_main.match_bm25(recipe_id, ?) IS NOT NULL
+                                                 fts_main_recipes_main.match_bm25(recipe_id, ?) AS score
+                                          FROM recipes_main
+                                          WHERE fts_main_recipes_main.match_bm25(recipe_id, ?) IS NOT NULL
                                           ORDER BY score DESC LIMIT 8
                                           """, [query.strip(), query.strip()]).df()
 
@@ -459,7 +459,7 @@ def register_callbacks(app: dash.Dash):
                 return _extract_recipe_payload(df)
 
         # Sinon (initialisation ou bouton aléatoire), on prend une recette au hasard avec image
-        random_id_df = con.execute("SELECT recipe_id FROM recipes.recipes_main WHERE has_image = true USING SAMPLE 1").df()
+        random_id_df = con.execute("SELECT recipe_id FROM recipes_main WHERE has_image = true USING SAMPLE 1").df()
 
         if random_id_df.empty:
             return html.Div("Pas d'image"), "Pas de recette", 0, "", "", "", {}

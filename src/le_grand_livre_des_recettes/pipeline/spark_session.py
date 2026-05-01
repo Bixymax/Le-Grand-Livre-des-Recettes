@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 
+from delta import configure_spark_with_delta_pip
 from pyspark.sql import SparkSession
 
 
@@ -23,15 +24,18 @@ def get_or_create_spark(
     """
     resolved_master: str = master or os.environ.get("SPARK_MASTER_URL", "local[*]")
 
-    spark: SparkSession = (
+    builder = (
         SparkSession.builder.appName(app_name)
         .master(resolved_master)
         .config("spark.driver.memory", "4g")
         .config("spark.executor.memory", "1g")
         .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
         .config("spark.sql.shuffle.partitions", "8")
-        .getOrCreate()
+        .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension")
+        .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog")
     )
+
+    spark: SparkSession = configure_spark_with_delta_pip(builder).getOrCreate()
 
     spark.sparkContext.setLogLevel("WARN")
 

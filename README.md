@@ -70,13 +70,21 @@ python run_pipeline.py info               # Stats des tables finales
 
 ---
 
-## Commandes Makefile
+## Tests
 
-| Commande | Description |
-|----------|-------------|
-| `make down` | Arrêt du cluster, suppression des outputs et de l'image |
-| `make logs` | Suivi des logs du master |
-| `make clean-data` | Supprime `data/staging/` et `data/outputs/` |
+La suite de tests couvre les sources dlt, les transformateurs Spark, le pipeline d'intégration et les utilitaires internes.
+
+```bash
+pytest tests/ -v
+```
+
+| Fichier | Contenu |
+|---------|---------|
+| `tests/test_sources.py` | Sources dlt (MIT & Kaggle) |
+| `tests/test_transformers.py` | Transformateurs PySpark |
+| `tests/test_pipeline.py` | Pipeline complet (unitaire) |
+| `tests/test_integration.py` | Intégration bout-en-bout |
+| `tests/conftest.py` | Fixtures partagées |
 
 ---
 

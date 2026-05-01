@@ -21,7 +21,7 @@ from le_grand_livre_des_recettes.pipeline.sources._utils import log_progress, no
 @dlt.resource(
     name="layer1",
     write_disposition=cfg.DLT_WRITE_DISPOSITION,
-    columns={"ingredients_raw": {"data_type": "complex"}},
+    columns={"ingredients_raw": {"data_type": "json"}},
 )
 def layer1() -> Iterator[dict[str, Any]]:
     """Yield les recettes brutes depuis layer1.json."""
@@ -52,7 +52,7 @@ def layer1() -> Iterator[dict[str, Any]]:
 @dlt.resource(
     name="layer2",
     write_disposition=cfg.DLT_WRITE_DISPOSITION,
-    columns={"image_urls": {"data_type": "complex"}},
+    columns={"image_urls": {"data_type": "json"}},
 )
 def layer2() -> Iterator[dict[str, Any]]:
     """Yield les associations d'images depuis layer2+.json."""
@@ -79,7 +79,7 @@ def layer2() -> Iterator[dict[str, Any]]:
 @dlt.resource(
     name="det_ingrs",
     write_disposition=cfg.DLT_WRITE_DISPOSITION,
-    columns={"ingredients_validated": {"data_type": "complex"}},
+    columns={"ingredients_validated": {"data_type": "json"}},
 )
 def det_ingrs() -> Iterator[dict[str, Any]]:
     """Yield les ingrédients validés (filtrage via tableau booléen parallèle)."""

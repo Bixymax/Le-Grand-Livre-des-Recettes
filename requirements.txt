@@ -2,8 +2,11 @@ dlt[filesystem]>=1.9.0
 ijson>=3.2.0
 pyarrow==16.1.0
 pyspark==3.5.5
+delta-spark==3.3.0
 pydantic>=2.7.0
 typer>=0.12.0
 rich>=13.0.0
 python-dotenv>=1.0.0
+pytest>=8.0.0
+pytest-cov>=5.0.0
 setuptools<70.0.0

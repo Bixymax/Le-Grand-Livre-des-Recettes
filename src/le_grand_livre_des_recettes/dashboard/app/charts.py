@@ -61,7 +61,7 @@ def kcal_histogram(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=No
         base_clauses=["mit_energy_kcal IS NOT NULL", "mit_energy_kcal < 3500"]
     )
 
-    df = _exec(f"SELECT mit_energy_kcal AS energy_kcal FROM recipes.recipes_main {where_str}", params).df()
+    df = _exec(f"SELECT mit_energy_kcal AS energy_kcal FROM recipes_main {where_str}", params).df()
 
     fig = px.histogram(df, x="energy_kcal", nbins=60, color_discrete_sequence=[PALETTE["accent1"]])
     fig.update_traces(marker_line_width=0.5, marker_line_color="white")
@@ -78,7 +78,7 @@ def kcal_histogram(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=No
 
 def nutri_pie(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None) -> go.Figure:
     where_str, params = _build_where(nutri_scores, cook_cats, kcal_min, kcal_max, table_prefix="m.")
-    joins = "JOIN recipes.recipes_main m ON n.recipe_id = m.recipe_id" if where_str else ""
+    joins = "JOIN recipes_main m ON n.recipe_id = m.recipe_id" if where_str else ""
 
     query = f"""
         SELECT 
@@ -87,7 +87,7 @@ def nutri_pie(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None) -
             SUM(n.salt_g) AS "Sel",
             SUM(n.saturates_g) AS "Graisses saturées",
             SUM(n.sugars_g) AS "Sucres"
-        FROM recipes.recipes_nutrition_detail n
+        FROM recipes_nutrition n
         {joins} {where_str}
     """
     df = _exec(query, params).df()
@@ -111,7 +111,7 @@ def nutri_bar(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None) -
 
     df = _exec(f"""
         SELECT nutri_score AS score, COUNT(*) AS count
-        FROM recipes.recipes_main {where_str}
+        FROM recipes_main {where_str}
         GROUP BY score ORDER BY score
     """, params).df()
 
@@ -142,7 +142,7 @@ def cook_time_chart(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=N
 
     df = _exec(f"""
         SELECT cook_time_category, COUNT(*) AS count
-        FROM recipes.recipes_main {where_str}
+        FROM recipes_main {where_str}
         GROUP BY cook_time_category
     """, params).df()
 
@@ -176,7 +176,7 @@ def cook_time_curve(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=N
 
     df = _exec(f"""
         SELECT FLOOR(cook_minutes / 5) * 5 AS bucket, COUNT(*) AS count
-        FROM recipes.recipes_main {where_str}
+        FROM recipes_main {where_str}
         GROUP BY bucket ORDER BY bucket
     """, params).df()
 
@@ -205,8 +205,8 @@ def scatter_saturates_sugars(nutri_scores=None, cook_cats=None, kcal_min=None, k
 
     df = _exec(f"""
         SELECT n.saturates_g, n.sugars_g, COALESCE(m.nutri_score, '?') AS nutri_score, m.title
-        FROM recipes.recipes_nutrition_detail n
-        JOIN recipes.recipes_main m ON n.recipe_id = m.recipe_id
+        FROM recipes_nutrition n
+        JOIN recipes_main m ON n.recipe_id = m.recipe_id
         {where_str} USING SAMPLE 2000 ROWS
     """, params).df()
 
@@ -244,7 +244,7 @@ def _generic_top_chart(sql_field: str, color: str, title: str, nutri_scores, coo
         SELECT item, COUNT(*) AS freq
         FROM (
             SELECT UNNEST({sql_field}) AS item
-            FROM recipes.recipes_main {where_str}
+            FROM recipes_main {where_str}
         ) sub
         WHERE item IS NOT NULL AND LENGTH(TRIM(item)) > 1
         GROUP BY item ORDER BY freq DESC LIMIT ?

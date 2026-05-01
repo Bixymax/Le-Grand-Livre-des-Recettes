@@ -9,7 +9,7 @@ con = duckdb.connect(DB_PATH, read_only=True)
 print("DuckDB connecté à la base persistante")
 
 # Ajout du préfixe "recipes." ici
-_main_cols = {row[0] for row in con.execute("DESCRIBE recipes.recipes_main").fetchall()}
+_main_cols = {row[0] for row in con.execute("DESCRIBE recipes_main").fetchall()}
 _image_urls_select = (
     "m.image_urls" if "image_urls" in _main_cols else "NULL::VARCHAR[] AS image_urls"
 )
@@ -26,7 +26,7 @@ _stats = con.cursor().execute("""
             WHERE cook_minutes BETWEEN 1 AND 600))                           AS avg_cook,
         ROUND(100.0 * COUNT(*) FILTER (WHERE cook_time_category = 'rapide')
               / NULLIF(COUNT(*), 0))                                         AS pct_quick
-    FROM recipes.recipes_main
+    FROM recipes_main
 """).fetchone()
 
 TOTAL_RECIPES, TOTAL_WITH_IMAGE, TOTAL_WITH_NUTRITION, AVG_KCAL, AVG_COOK_MIN, PCT_QUICK = (
@@ -36,7 +36,7 @@ TOTAL_RECIPES, TOTAL_WITH_IMAGE, TOTAL_WITH_NUTRITION, AVG_KCAL, AVG_COOK_MIN, P
 
 # Ajout du préfixe "recipes." ici
 _top_nutri = con.cursor().execute("""
-    SELECT nutri_score FROM recipes.recipes_main WHERE nutri_score IS NOT NULL
+    SELECT nutri_score FROM recipes_main WHERE nutri_score IS NOT NULL
     GROUP BY nutri_score ORDER BY COUNT(*) DESC LIMIT 1
 """).fetchone()
 TOP_NUTRI_SCORE = _top_nutri[0] if _top_nutri else "?"
@@ -45,13 +45,13 @@ TOP_NUTRI_SCORE = _top_nutri[0] if _top_nutri else "?"
 PCT_A_B = con.cursor().execute("""
     SELECT ROUND(100.0 * COUNT(*) FILTER (WHERE nutri_score IN ('A', 'B'))
                  / NULLIF(COUNT(*) FILTER (WHERE nutri_score IS NOT NULL), 0))
-    FROM recipes.recipes_main
+    FROM recipes_main
 """).fetchone()[0] or 0
 
 try:
     AVG_STEPS = (
         con.cursor().execute(
-            "SELECT ROUND(AVG(n_steps)) FROM recipes.recipes_main WHERE n_steps IS NOT NULL"
+            "SELECT ROUND(AVG(n_steps)) FROM recipes_main WHERE n_steps IS NOT NULL"
         ).fetchone()[0] or 0
     )
 except Exception:
@@ -61,7 +61,7 @@ except Exception:
 # Ajout du préfixe "recipes." ici
 random_id_df = con.cursor().execute("""
     SELECT recipe_id 
-    FROM recipes.recipes_main 
+    FROM recipes_main 
     WHERE has_image = true 
     USING SAMPLE 1
 """).df()

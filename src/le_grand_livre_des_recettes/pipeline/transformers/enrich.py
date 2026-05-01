@@ -125,7 +125,7 @@ def build_nutrition_detail(df: DataFrame) -> DataFrame:
 
 def write_final_tables(df_assembled: DataFrame) -> None:
     """
-    Orchestre l'enrichissement et l'écriture en Parquet des 3 tables finales.
+    Orchestre l'enrichissement et l'écriture en Delta des 3 tables finales.
     La table `recipes_main` est partitionnée physiquement par Nutri-Score.
     """
     df_enriched = _enrich(df_assembled)
@@ -135,18 +135,19 @@ def write_final_tables(df_assembled: DataFrame) -> None:
     (
         df_main.repartition(cfg.N_PARTITIONS, "nutri_score")
         .sortWithinPartitions("nutri_score")
-        .write.mode("overwrite")
+        .write.format("delta")
+        .mode("overwrite")
         .partitionBy("nutri_score")
-        .parquet(cfg.OUT_RECIPES_MAIN)
+        .save(cfg.OUT_RECIPES_MAIN)
     )
     print("  [OK] recipes_main          -> outputs/parquets/recipes_main")
 
     # 2. Construction et écriture de ingredients_index
     df_index = build_ingredients_index(df_main)
-    df_index.write.mode("overwrite").parquet(cfg.OUT_INGREDIENTS_INDEX)
+    df_index.write.format("delta").mode("overwrite").save(cfg.OUT_INGREDIENTS_INDEX)
     print("  [OK] ingredients_index     -> outputs/parquets/ingredients_index")
 
     # 3. Construction et écriture de nutrition_detail
     df_nutr_detail = build_nutrition_detail(df_enriched)
-    df_nutr_detail.write.mode("overwrite").parquet(cfg.OUT_NUTRITION_DETAIL)
+    df_nutr_detail.write.format("delta").mode("overwrite").save(cfg.OUT_NUTRITION_DETAIL)
     print("  [OK] nutrition_detail      -> outputs/parquets/recipes_nutrition_detail")
