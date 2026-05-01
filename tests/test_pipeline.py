@@ -143,17 +143,17 @@ class TestWriteFinalTables:
 
     def test_recipes_main_written(self, spark: SparkSession, output_dir: Path) -> None:
         """Vérifie que la table principale des recettes est correctement enregistrée."""
-        assert spark.read.parquet(str(output_dir / "recipes_main")).count() == 3
+        assert spark.read.format("delta").load(str(output_dir / "recipes_main")).count() == 3
 
     def test_no_null_recipe_id(self, spark: SparkSession, output_dir: Path) -> None:
         """S'assure qu'aucun identifiant de recette n'est nul dans la table principale."""
-        df = spark.read.parquet(str(output_dir / "recipes_main"))
+        df = spark.read.format("delta").load(str(output_dir / "recipes_main"))
         assert df.filter(df.recipe_id.isNull()).count() == 0
 
     def test_ingredients_index_written(self, spark: SparkSession, output_dir: Path) -> None:
         """Vérifie que l'index des ingrédients contient des données exploitables."""
-        assert spark.read.parquet(str(output_dir / "ingredients_index")).count() > 0
+        assert spark.read.format("delta").load(str(output_dir / "ingredients_index")).count() > 0
 
     def test_nutrition_detail_written(self, spark: SparkSession, output_dir: Path) -> None:
         """Vérifie que les détails nutritionnels sont correctement enregistrés."""
-        assert spark.read.parquet(str(output_dir / "recipes_nutrition_detail")).count() > 0
+        assert spark.read.format("delta").load(str(output_dir / "recipes_nutrition_detail")).count() > 0

@@ -9,7 +9,7 @@ sur le Nutri-Score pour l'optimisation des requêtes.
 
 from __future__ import annotations
 
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
 from le_grand_livre_des_recettes.pipeline import config as cfg
@@ -123,11 +123,22 @@ def build_nutrition_detail(df: DataFrame) -> DataFrame:
     ).dropDuplicates(["recipe_id"])
 
 
+def _zorder_optimize(spark: SparkSession, path: str, col: str) -> None:
+    """Applique OPTIMIZE ZORDER BY sur une table Delta. Échoue silencieusement hors Databricks."""
+    try:
+        spark.sql(f"OPTIMIZE delta.`{path}` ZORDER BY ({col})")
+        print(f"  [OK] Z-Order ({col})")
+    except Exception as e:
+        print(f"  [WARN] Z-Order ignoré ({col}) : {e}")
+
+
 def write_final_tables(df_assembled: DataFrame) -> None:
     """
     Orchestre l'enrichissement et l'écriture en Delta des 3 tables finales.
     La table `recipes_main` est partitionnée physiquement par Nutri-Score.
+    Chaque table reçoit ensuite un OPTIMIZE ZORDER BY pour accélérer les requêtes fréquentes.
     """
+    spark = df_assembled.sparkSession
     df_enriched = _enrich(df_assembled)
 
     # 1. Construction et écriture de recipes_main
@@ -140,14 +151,17 @@ def write_final_tables(df_assembled: DataFrame) -> None:
         .partitionBy("nutri_score")
         .save(cfg.OUT_RECIPES_MAIN)
     )
+    _zorder_optimize(spark, cfg.OUT_RECIPES_MAIN, "title")
     print("  [OK] recipes_main          -> outputs/parquets/recipes_main")
 
     # 2. Construction et écriture de ingredients_index
     df_index = build_ingredients_index(df_main)
     df_index.write.format("delta").mode("overwrite").save(cfg.OUT_INGREDIENTS_INDEX)
+    _zorder_optimize(spark, cfg.OUT_INGREDIENTS_INDEX, "ingredient")
     print("  [OK] ingredients_index     -> outputs/parquets/ingredients_index")
 
     # 3. Construction et écriture de nutrition_detail
     df_nutr_detail = build_nutrition_detail(df_enriched)
     df_nutr_detail.write.format("delta").mode("overwrite").save(cfg.OUT_NUTRITION_DETAIL)
+    _zorder_optimize(spark, cfg.OUT_NUTRITION_DETAIL, "recipe_id")
     print("  [OK] nutrition_detail      -> outputs/parquets/recipes_nutrition_detail")

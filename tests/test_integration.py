@@ -54,13 +54,13 @@ class TestRecipesMain:
 
     def test_one_row_per_recipe(self, spark: SparkSession, output_dir: Path) -> None:
         """Vérifie l'unicité des recettes dans la table principale."""
-        df = spark.read.parquet(str(output_dir / "recipes_main"))
+        df = spark.read.format("delta").load(str(output_dir / "recipes_main"))
         assert df.count() == 3
         assert df.count() == df.select("recipe_id").distinct().count()
 
     def test_has_image_flags(self, spark: SparkSession, output_dir: Path) -> None:
         """Valide l'indicateur de présence d'image pour chaque recette."""
-        df = spark.read.parquet(str(output_dir / "recipes_main"))
+        df = spark.read.format("delta").load(str(output_dir / "recipes_main"))
         rows = {r["recipe_id"]: r["has_image"] for r in df.collect()}
         assert rows["abc111"] is True
         assert rows["bcd222"] is True
@@ -68,7 +68,7 @@ class TestRecipesMain:
 
     def test_cook_time_categories(self, spark: SparkSession, output_dir: Path) -> None:
         """Vérifie l'attribution correcte de la catégorie de temps de cuisson."""
-        df = spark.read.parquet(str(output_dir / "recipes_main"))
+        df = spark.read.format("delta").load(str(output_dir / "recipes_main"))
         rows = {r["recipe_id"]: r["cook_time_category"] for r in df.collect()}
         assert rows["abc111"] == "moyen"
         assert rows["bcd222"] == "inconnu"
@@ -76,7 +76,7 @@ class TestRecipesMain:
 
     def test_valid_cook_time_values(self, spark: SparkSession, output_dir: Path) -> None:
         """S'assure que la catégorie de temps de cuisson utilise les valeurs attendues."""
-        df = spark.read.parquet(str(output_dir / "recipes_main"))
+        df = spark.read.format("delta").load(str(output_dir / "recipes_main"))
         cats = {r["cook_time_category"] for r in df.collect()}
         assert cats.issubset({"rapide", "moyen", "long", "inconnu"})
 
@@ -93,14 +93,14 @@ class TestEnergySemantics:
 
     def test_nutri_score_null_without_mit_data(self, spark: SparkSession, output_dir: Path) -> None:
         """Vérifie que le Nutri-Score est nul en l'absence de données MIT."""
-        df = spark.read.parquet(str(output_dir / "recipes_main"))
+        df = spark.read.format("delta").load(str(output_dir / "recipes_main"))
         row = df.filter(df.recipe_id == "bcd222").collect()[0]
         assert row["mit_energy_kcal"] is None
         assert row["nutri_score"] is None
 
     def test_nutri_score_uses_mit_kcal_per_100g(self, spark: SparkSession, output_dir: Path) -> None:
         """Valide que le Nutri-Score est calculé avec les données MIT (kcal/100g)."""
-        df = spark.read.parquet(str(output_dir / "recipes_main"))
+        df = spark.read.format("delta").load(str(output_dir / "recipes_main"))
         row = df.filter(df.recipe_id == "abc111").collect()[0]
         assert row["mit_energy_kcal"] == pytest.approx(350.0)
         assert row["kaggle_energy_kcal"] == pytest.approx(380.0)
@@ -108,7 +108,7 @@ class TestEnergySemantics:
 
     def test_apple_pie_nutri_score(self, spark: SparkSession, output_dir: Path) -> None:
         """Vérifie le calcul correct du Nutri-Score pour une recette spécifique (apple pie)."""
-        df = spark.read.parquet(str(output_dir / "recipes_main"))
+        df = spark.read.format("delta").load(str(output_dir / "recipes_main"))
         row = df.filter(df.recipe_id == "cde333").collect()[0]
         assert row["nutri_score"] == "C"
 
@@ -118,18 +118,18 @@ class TestIngredientsIndex:
 
     def test_invalid_ingredient_excluded(self, spark: SparkSession, output_dir: Path) -> None:
         """S'assure que les ingrédients marqués comme invalides sont exclus de l'index."""
-        df = spark.read.parquet(str(output_dir / "ingredients_index"))
+        df = spark.read.format("delta").load(str(output_dir / "ingredients_index"))
         assert df.filter(df.ingredient == "pie crust").count() == 0
 
     def test_valid_ingredients_indexed(self, spark: SparkSession, output_dir: Path) -> None:
         """Vérifie que tous les ingrédients valides d'une recette sont indexés."""
-        df = spark.read.parquet(str(output_dir / "ingredients_index"))
+        df = spark.read.format("delta").load(str(output_dir / "ingredients_index"))
         ingrs = {r["ingredient"] for r in df.filter(df.recipe_id == "abc111").collect()}
         assert {"flour", "sugar", "eggs", "cocoa powder"}.issubset(ingrs)
 
     def test_filter_and(self, spark: SparkSession, output_dir: Path) -> None:
         """Valide la recherche de recettes contenant plusieurs ingrédients spécifiques."""
-        df = spark.read.parquet(str(output_dir / "ingredients_index"))
+        df = spark.read.format("delta").load(str(output_dir / "ingredients_index"))
         result = (
             df.filter(df.ingredient.isin("flour", "sugar"))
             .groupBy("recipe_id")
@@ -145,11 +145,11 @@ class TestNutritionDetail:
 
     def test_only_recipes_with_mit_data(self, spark: SparkSession, output_dir: Path) -> None:
         """Vérifie que seules les recettes avec des données MIT sont présentes."""
-        df = spark.read.parquet(str(output_dir / "recipes_nutrition_detail"))
+        df = spark.read.format("delta").load(str(output_dir / "recipes_nutrition_detail"))
         ids = {r["recipe_id"] for r in df.collect()}
         assert ids == {"abc111", "cde333"}
 
     def test_pasta_absent(self, spark: SparkSession, output_dir: Path) -> None:
         """S'assure qu'une recette sans données nutritionnelles MIT est absente."""
-        df = spark.read.parquet(str(output_dir / "recipes_nutrition_detail"))
+        df = spark.read.format("delta").load(str(output_dir / "recipes_nutrition_detail"))
         assert df.filter(df.recipe_id == "bcd222").count() == 0
