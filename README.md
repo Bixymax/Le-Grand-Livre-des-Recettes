@@ -1,5 +1,13 @@
 # Le Grand Livre des Recettes — Pipeline ETL
 
+![Python](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white)
+![PySpark](https://img.shields.io/badge/PySpark-3.5.5-E25A1C?logo=apachespark&logoColor=white)
+![Delta Lake](https://img.shields.io/badge/Delta--Spark-3.3.0-003366?logo=delta&logoColor=white)
+![dlt](https://img.shields.io/badge/dlt-1.9%2B-8B5CF6)
+![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)
+![License](https://img.shields.io/badge/License-MIT-green)
+![Tests](https://img.shields.io/badge/Tests-pytest-yellow?logo=pytest&logoColor=white)
+
 Pipeline ETL de données culinaires transformant **MIT Recipe1M+** et **Kaggle Food.com**
 en tables Parquet optimisées pour un moteur de recherche de recettes.
 
@@ -201,3 +209,9 @@ DLT_WRITE_DISPOSITION: str = "append"   # au lieu de "replace"
 dlt ajoutera les nouveaux enregistrements sans écraser les données existantes.
 La Phase 2 (PySpark) reste inchangée — elle relit le staging complet et réécrit
 les tables finales en `overwrite`, ce qui consolide les données anciennes et nouvelles.
+
+---
+
+## Licence
+
+MIT © 2026 Maxime Bourguignon
