@@ -49,8 +49,6 @@ def run(
 def ingest() -> None:
     """Exécute la phase 1 : Ingestion des données brutes vers le staging via dlt."""
     console.rule("[bold]Phase 1 - Ingestion dlt")
-    cfg.STAGING_DIR.mkdir(parents=True, exist_ok=True)
-
     t0: float = time.perf_counter()
     run_ingestion()
     console.print(f"\n[green]Ingestion dlt terminee en {time.perf_counter() - t0:.1f}s[/green]")
