@@ -2,7 +2,8 @@
 Phase 1 - Ingestion via dlt.
 
 Charge les fichiers sources (JSON et CSV), les normalise et les écrit
-au format Delta Lake dans le répertoire de staging.
+au format Parquet dans le répertoire de staging (format intermédiaire jetable).
+Les tables finales persistantes sont écrites en Delta Lake par Spark (phase 2).
 
 Tables générées :
 - layer1 : MIT layer1.json
@@ -55,6 +56,6 @@ def run_ingestion() -> None:
         print(f"\n--- Table : {name} ---")
         load_info = pipeline.run(
             resource_fn(),
-            table_format="delta",
+            loader_file_format="parquet",
         )
         print(load_info)

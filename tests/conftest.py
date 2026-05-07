@@ -1,6 +1,6 @@
 """Fixtures Pytest partagées pour les tests du pipeline de données.
 
-Ce module génère les données de staging au format Delta Lake pour reproduire
+Ce module génère les données de staging au format Parquet pour reproduire
 le comportement en sortie de `dlt` (tableaux sérialisés en JSON).
 """
 
@@ -73,7 +73,7 @@ def staging_dir(
             StructField("n_steps", IntegerType()),
             StructField("title_norm", StringType()),
         ]),
-    ).write.format("delta").save(str(dst / "layer1"))
+    ).write.parquet(str(dst / "layer1"))  # staging dlt = Parquet
 
     # Table layer2
     spark.createDataFrame(
@@ -91,7 +91,7 @@ def staging_dir(
             StructField("image_urls", StringType()),
             StructField("has_image", BooleanType()),
         ]),
-    ).write.format("delta").save(str(dst / "layer2"))
+    ).write.parquet(str(dst / "layer2"))
 
     # Table det_ingrs
     spark.createDataFrame(
@@ -105,7 +105,7 @@ def staging_dir(
             StructField("ingredients_validated", StringType()),
             StructField("n_ingredients_validated", IntegerType()),
         ]),
-    ).write.format("delta").save(str(dst / "det_ingrs"))
+    ).write.parquet(str(dst / "det_ingrs"))
 
     # Table nutrition
     spark.createDataFrame(
@@ -123,7 +123,7 @@ def staging_dir(
             StructField("saturates_g", DoubleType()),
             StructField("sugars_g", DoubleType()),
         ]),
-    ).write.format("delta").save(str(dst / "nutrition"))
+    ).write.parquet(str(dst / "nutrition"))
 
     # Table kaggle
     spark.createDataFrame(
@@ -141,6 +141,6 @@ def staging_dir(
             StructField("title_norm", StringType()),
             StructField("kaggle_energy_kcal", DoubleType()),
         ]),
-    ).write.format("delta").save(str(dst / "kaggle"))
+    ).write.parquet(str(dst / "kaggle"))
 
     return dst
