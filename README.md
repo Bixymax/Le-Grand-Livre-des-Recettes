@@ -196,22 +196,6 @@ recipes-pipeline/
 
 ---
 
-## Chargement incrémental en production
-
-Quand la base est en production et que de nouvelles recettes doivent être ajoutées,
-il suffit de changer une constante dans `config.py` :
-
-```python
-# config.py
-DLT_WRITE_DISPOSITION: str = "append"   # au lieu de "replace"
-```
-
-dlt ajoutera les nouveaux enregistrements sans écraser les données existantes.
-La Phase 2 (PySpark) reste inchangée — elle relit le staging complet et réécrit
-les tables finales en `overwrite`, ce qui consolide les données anciennes et nouvelles.
-
----
-
 ## Licence
 
 MIT © 2026 Maxime Bourguignon

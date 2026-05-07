@@ -15,7 +15,8 @@ build/
 venv/
 
 # Données — ne pas committer les fichiers sources ni les outputs
-data/raw/
+data/raw/*
+!data/raw/README.md
 data/staging/
 data/outputs/
 
