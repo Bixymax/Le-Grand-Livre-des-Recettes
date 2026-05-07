@@ -9,10 +9,10 @@
 ![Tests](https://img.shields.io/badge/Tests-pytest-yellow?logo=pytest&logoColor=white)
 
 Pipeline ETL de données culinaires transformant **MIT Recipe1M+** et **Kaggle Food.com**
-en tables Parquet optimisées pour un moteur de recherche de recettes.
+en tables **Delta Lake** pour un moteur de recherche de recettes.
 
-- **Phase 1 — Ingestion** : `dlt` + `ijson` / `csv.DictReader` → lecture en streaming, normalisation Python, écriture Parquet (staging)
-- **Phase 2 — Transformation** : `PySpark` → jointures LEFT JOIN, enrichissement, 3 tables finales
+- **Phase 1 — Ingestion** : `dlt` + `ijson` / `csv.DictReader` → lecture en streaming, normalisation Python, écriture Parquet (staging intermédiaire)
+- **Phase 2 — Transformation** : `PySpark` → jointures LEFT JOIN, enrichissement, 3 tables finales Delta Lake (ACID, Z-Order, `delta_scan`)
 
 ---
 

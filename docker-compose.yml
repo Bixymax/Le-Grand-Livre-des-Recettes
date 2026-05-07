@@ -17,8 +17,6 @@ services:
       - ./.dlt:/opt/spark/.dlt               # config dlt (destination, pipeline name)
       - ./spark-logs:/opt/spark/spark-events
       - ivy-cache:/root/.ivy2                   # cache JARs Delta (Maven/Ivy)
-    environment:
-      TMPDIR: /opt/spark/data/.tmp
     env_file:
       - .env.spark
     ports:

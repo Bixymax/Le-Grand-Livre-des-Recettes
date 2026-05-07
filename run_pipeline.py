@@ -2,8 +2,8 @@
 Entrypoint du pipeline recipes.
 
 Architecture en deux phases :
-- Phase 1 : Ingestion via dlt (raw vers staging au format Delta Lake).
-- Phase 2 : Transformation via PySpark (staging Delta vers outputs Delta).
+- Phase 1 : Ingestion via dlt (raw → staging Parquet, intermédiaire géré par dlt).
+- Phase 2 : Transformation via PySpark (staging Parquet → outputs Delta Lake).
 
 Usage :
     python run_pipeline.py run

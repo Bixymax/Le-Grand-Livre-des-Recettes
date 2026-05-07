@@ -4,11 +4,6 @@ SPARK_WORKLOAD=$1
 
 echo "SPARK_WORKLOAD: $SPARK_WORKLOAD"
 
-# Garantit que le tmpdir de delta-rs est sur le même filesystem que les données
-# (bind mount Docker), évitant l'erreur "Upload aborted" du rename cross-device.
-mkdir -p /opt/spark/data/.tmp
-export TMPDIR=/opt/spark/data/.tmp
-
 if [ "$SPARK_WORKLOAD" == "master" ];
 then
   start-master.sh -p 7077

@@ -43,7 +43,7 @@ def staging_dir(
     spark: SparkSession,
     tmp_path_factory: pytest.TempPathFactory
 ) -> Path:
-    """Crée les tables Delta de staging dans un répertoire temporaire.
+    """Crée les tables Parquet de staging dans un répertoire temporaire.
 
     Génère 5 tables (layer1, layer2, det_ingrs, nutrition, kaggle) avec
     des colonnes de type array sérialisées sous forme de chaînes JSON.

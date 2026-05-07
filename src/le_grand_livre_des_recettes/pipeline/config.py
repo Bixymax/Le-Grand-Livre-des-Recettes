@@ -22,7 +22,7 @@ DET_INGRS_PATH: Path = RAW_DIR / "det_ingrs.json"
 NUTR_PATH: Path = RAW_DIR / "recipes_with_nutritional_info.json"
 RAW_CSV_PATH: Path = RAW_DIR / "RAW_recipes.csv"
 
-# Staging - sorties dlt en Delta Lake (Phase 1)
+# Staging - sorties dlt en Parquet (Phase 1, intermédiaire jetable)
 STAGING_DIR: Path = DATA_DIR / "staging"
 
 STAGING_LAYER1: str = str(STAGING_DIR / "layer1")
