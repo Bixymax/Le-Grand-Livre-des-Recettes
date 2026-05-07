@@ -1,6 +1,6 @@
 dlt[filesystem,deltalake]>=1.9.0
 ijson>=3.2.0
-pyarrow==16.1.0
+pyarrow>=17.0.0
 pyspark==3.5.5
 delta-spark==3.3.0
 pydantic>=2.7.0
