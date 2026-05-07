@@ -55,6 +55,6 @@ def run_ingestion() -> None:
         print(f"\n--- Table : {name} ---")
         load_info = pipeline.run(
             resource_fn(),
-            loader_file_format="delta",
+            table_format="delta",
         )
         print(load_info)
