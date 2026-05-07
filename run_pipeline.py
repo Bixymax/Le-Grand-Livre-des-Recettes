@@ -2,8 +2,8 @@
 Entrypoint du pipeline recipes.
 
 Architecture en deux phases :
-- Phase 1 : Ingestion via dlt (raw vers staging au format Parquet).
-- Phase 2 : Transformation via PySpark (staging vers outputs).
+- Phase 1 : Ingestion via dlt (raw vers staging au format Delta Lake).
+- Phase 2 : Transformation via PySpark (staging Delta vers outputs Delta).
 
 Usage :
     python run_pipeline.py run
@@ -88,9 +88,9 @@ def info(
     spark = get_or_create_spark(master=master)
 
     try:
-        df_main = spark.read.parquet(cfg.OUT_RECIPES_MAIN)
-        df_index = spark.read.parquet(cfg.OUT_INGREDIENTS_INDEX)
-        df_nutr = spark.read.parquet(cfg.OUT_NUTRITION_DETAIL)
+        df_main = spark.read.format("delta").load(cfg.OUT_RECIPES_MAIN)
+        df_index = spark.read.format("delta").load(cfg.OUT_INGREDIENTS_INDEX)
+        df_nutr = spark.read.format("delta").load(cfg.OUT_NUTRITION_DETAIL)
     except Exception as exc:
         console.print(f"[red]Erreur de lecture des tables finales : {exc}[/red]")
         raise typer.Exit(1)

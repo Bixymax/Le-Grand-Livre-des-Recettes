@@ -86,7 +86,7 @@ class TestEnergySemantics:
 
     def test_both_energy_columns_exist(self, spark: SparkSession, output_dir: Path) -> None:
         """Vérifie que les colonnes d'énergie MIT et Kaggle coexistent sans fusion."""
-        cols = set(spark.read.parquet(str(output_dir / "recipes_main")).columns)
+        cols = set(spark.read.format("delta").load(str(output_dir / "recipes_main")).columns)
         assert "mit_energy_kcal" in cols
         assert "kaggle_energy_kcal" in cols
         assert "energy_kcal" not in cols

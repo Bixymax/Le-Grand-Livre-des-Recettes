@@ -3,16 +3,16 @@
 ## Architecture
 
 ```
-Phase 1 — Ingestion (dlt)
+Phase 1 — Ingestion (dlt → Delta Lake)
   data/raw/*.json + *.csv
       ↓  dlt resources (normalisation Python, streaming ijson / csv.DictReader)
-  data/staging/*.parquet
+  data/staging/  (tables Delta)
       layer1/  layer2/  det_ingrs/  nutrition/  kaggle/
 
-Phase 2 — Transformation (PySpark)
-  data/staging/*.parquet
+Phase 2 — Transformation (PySpark sur Delta)
+  data/staging/  (tables Delta)
       ↓  Jointures LEFT JOIN + enrichissement
-  data/outputs/parquets/
+  data/outputs/delta/
       ├── recipes_main/            (partitionné par nutri_score)
       ├── ingredients_index/
       └── recipes_nutrition_detail/

@@ -5,11 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "recipes-pipeline"
 version = "1.0.0"
-description = "PySpark pipeline — MIT Recipe1M+ + Kaggle Food.com → Parquet"
+description = "PySpark pipeline — MIT Recipe1M+ + Kaggle Food.com → Delta Lake"
 requires-python = ">=3.11"
 
 dependencies = [
-    "dlt[filesystem]>=1.9.0",
+    "dlt[filesystem,deltalake]>=1.9.0",
     "pyspark>=3.5.0",
     "delta-spark>=3.2.0,<4.0.0",
     "pyarrow>=16.0.0",

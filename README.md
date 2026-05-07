@@ -39,7 +39,7 @@ data/staging/          (Parquets intermédiaires — auto-générés)
         │  Phase 2 — PySpark  (jointures LEFT JOIN + enrichissement)
         ▼
 
-data/outputs/parquets/ (tables finales — auto-générées)
+data/outputs/delta/ (tables finales — auto-générées)
   ├── recipes_main/           partitionné par nutri_score
   ├── ingredients_index/
   └── recipes_nutrition_detail/

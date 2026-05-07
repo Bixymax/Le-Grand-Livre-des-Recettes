@@ -22,7 +22,7 @@ DET_INGRS_PATH: Path = RAW_DIR / "det_ingrs.json"
 NUTR_PATH: Path = RAW_DIR / "recipes_with_nutritional_info.json"
 RAW_CSV_PATH: Path = RAW_DIR / "RAW_recipes.csv"
 
-# Staging - sorties dlt (Phase 1)
+# Staging - sorties dlt en Delta Lake (Phase 1)
 STAGING_DIR: Path = DATA_DIR / "staging"
 
 STAGING_LAYER1: str = str(STAGING_DIR / "layer1")
@@ -31,8 +31,8 @@ STAGING_DET_INGRS: str = str(STAGING_DIR / "det_ingrs")
 STAGING_NUTR: str = str(STAGING_DIR / "nutrition")
 STAGING_KAGGLE: str = str(STAGING_DIR / "kaggle")
 
-# Outputs finaux - sorties PySpark (Phase 2)
-OUTPUT_DIR: Path = DATA_DIR / "outputs" / "parquets"
+# Outputs finaux - sorties PySpark en Delta Lake (Phase 2)
+OUTPUT_DIR: Path = DATA_DIR / "outputs" / "delta"
 
 OUT_RECIPES_MAIN: str = str(OUTPUT_DIR / "recipes_main")
 OUT_INGREDIENTS_INDEX: str = str(OUTPUT_DIR / "ingredients_index")

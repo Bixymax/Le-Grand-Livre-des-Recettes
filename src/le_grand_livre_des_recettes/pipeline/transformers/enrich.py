@@ -1,5 +1,5 @@
 """
-Phase 2b — Enrichissement et écriture des 3 tables finales Parquet.
+Phase 2b — Enrichissement et écriture des 3 tables finales Delta Lake.
 
 Prend le DataFrame assemblé brut pour calculer les colonnes dérivées
 et construire les tables `recipes_main`, `ingredients_index`, et
@@ -152,16 +152,16 @@ def write_final_tables(df_assembled: DataFrame) -> None:
         .save(cfg.OUT_RECIPES_MAIN)
     )
     _zorder_optimize(spark, cfg.OUT_RECIPES_MAIN, "title")
-    print("  [OK] recipes_main          -> outputs/parquets/recipes_main")
+    print("  [OK] recipes_main          -> outputs/delta/recipes_main")
 
     # 2. Construction et écriture de ingredients_index
     df_index = build_ingredients_index(df_main)
     df_index.write.format("delta").mode("overwrite").save(cfg.OUT_INGREDIENTS_INDEX)
     _zorder_optimize(spark, cfg.OUT_INGREDIENTS_INDEX, "ingredient")
-    print("  [OK] ingredients_index     -> outputs/parquets/ingredients_index")
+    print("  [OK] ingredients_index     -> outputs/delta/ingredients_index")
 
     # 3. Construction et écriture de nutrition_detail
     df_nutr_detail = build_nutrition_detail(df_enriched)
     df_nutr_detail.write.format("delta").mode("overwrite").save(cfg.OUT_NUTRITION_DETAIL)
     _zorder_optimize(spark, cfg.OUT_NUTRITION_DETAIL, "recipe_id")
-    print("  [OK] nutrition_detail      -> outputs/parquets/recipes_nutrition_detail")
+    print("  [OK] nutrition_detail      -> outputs/delta/recipes_nutrition_detail")
