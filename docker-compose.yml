@@ -16,7 +16,7 @@ services:
       - ./run_pipeline.py:/opt/spark/run_pipeline.py
       - ./.dlt:/opt/spark/.dlt               # config dlt (destination, pipeline name)
       - ./spark-logs:/opt/spark/spark-events
-      - spark-warehouse:/opt/spark/warehouse
+      - ivy-cache:/root/.ivy2                   # cache JARs Delta (Maven/Ivy)
     env_file:
       - .env.spark
     ports:
@@ -35,7 +35,6 @@ services:
       - .env.spark
     volumes:
       - ./spark-logs:/opt/spark/spark-events
-      - spark-warehouse:/opt/spark/warehouse
     ports:
       - '18080:18080'
 
@@ -51,8 +50,7 @@ services:
       - ./data:/opt/spark/data
       - ./src:/opt/spark/src
       - ./spark-logs:/opt/spark/spark-events
-      - spark-warehouse:/opt/spark/warehouse
 
 volumes:
   spark-logs:
-  spark-warehouse:
+  ivy-cache:

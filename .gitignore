@@ -22,7 +22,6 @@ data/outputs/
 
 # Docker
 spark-logs/
-warehouse/
 
 # IDE
 .idea/
