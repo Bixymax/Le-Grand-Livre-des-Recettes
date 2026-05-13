@@ -24,6 +24,8 @@ from rich.table import Table
 from le_grand_livre_des_recettes.pipeline import config as cfg
 from le_grand_livre_des_recettes.pipeline.ingest import run_ingestion
 from le_grand_livre_des_recettes.pipeline.spark_session import get_or_create_spark
+from le_grand_livre_des_recettes.pipeline.streaming.consumer import run_consumer
+from le_grand_livre_des_recettes.pipeline.streaming.producer import run_producer
 from le_grand_livre_des_recettes.pipeline.transformers.assemble import assemble
 from le_grand_livre_des_recettes.pipeline.transformers.enrich import write_final_tables
 
@@ -116,6 +118,44 @@ def info(
     table.add_row("recipes_nutrition_detail", f"{nutr_rows:,}", "-", "-")
 
     console.print(table)
+
+
+@app.command("stream-produce")
+def stream_produce(
+    delay: Annotated[float, typer.Option(help="Délai entre événements (s)")] = 2.0,
+    max_events: Annotated[
+        int | None, typer.Option(help="Nombre max d'événements (par défaut : infini)")
+    ] = None,
+    bootstrap: Annotated[
+        str | None, typer.Option(help="URL des brokers Kafka")
+    ] = None,
+) -> None:
+    """Phase 3a — Producer Kafka : simule l'arrivée de nouvelles recettes."""
+    console.rule("[bold]Phase 3a - Kafka Producer")
+    run_producer(
+        bootstrap_servers=bootstrap,
+        delay_seconds=delay,
+        max_events=max_events,
+    )
+
+
+@app.command("stream-consume")
+def stream_consume(
+    trigger: Annotated[int, typer.Option(help="Période micro-batch Spark (s)")] = 10,
+    starting_offsets: Annotated[
+        str, typer.Option(help="'latest' ou 'earliest'")
+    ] = "latest",
+    bootstrap: Annotated[
+        str | None, typer.Option(help="URL des brokers Kafka")
+    ] = None,
+) -> None:
+    """Phase 3b — Consumer Spark Structured Streaming : Kafka -> Delta."""
+    console.rule("[bold]Phase 3b - Spark Structured Streaming Consumer")
+    run_consumer(
+        bootstrap_servers=bootstrap,
+        trigger_seconds=trigger,
+        starting_offsets=starting_offsets,
+    )
 
 
 if __name__ == "__main__":

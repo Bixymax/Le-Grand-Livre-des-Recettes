@@ -38,6 +38,17 @@ OUT_RECIPES_MAIN: str = str(OUTPUT_DIR / "recipes_main")
 OUT_INGREDIENTS_INDEX: str = str(OUTPUT_DIR / "ingredients_index")
 OUT_NUTRITION_DETAIL: str = str(OUTPUT_DIR / "recipes_nutrition_detail")
 
+# Streaming - Phase 3 : Kafka + Spark Structured Streaming
+OUT_RECIPES_STREAM: str = str(OUTPUT_DIR / "recipes_stream")
+STREAM_CHECKPOINT_DIR: Path = DATA_DIR / "outputs" / "checkpoints" / "recipes_stream"
+
+import os as _os
+
+KAFKA_BOOTSTRAP_SERVERS: str = _os.environ.get(
+    "KAFKA_BOOTSTRAP_SERVERS", "localhost:29092"
+)
+KAFKA_TOPIC_RECIPES: str = "recipes-stream"
+
 # Paramètres Spark
 N_PARTITIONS: int = 8
 

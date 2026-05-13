@@ -13,6 +13,7 @@ en tables **Delta Lake** pour un moteur de recherche de recettes.
 
 - **Phase 1 — Ingestion** : `dlt` + `ijson` / `csv.DictReader` → lecture en streaming, normalisation Python, écriture Parquet (staging intermédiaire)
 - **Phase 2 — Transformation** : `PySpark` → jointures LEFT JOIN, enrichissement, 3 tables finales Delta Lake (ACID, Z-Order, `delta_scan`)
+- **Phase 3 — Streaming** : `Kafka` + `Spark Structured Streaming` → topic `recipes-stream` alimenté par un producer simulé, consommé en micro-batches Spark, append dans Delta `recipes_stream`. Dashboard Dash rafraîchi toutes les 30s.
 
 ---
 
@@ -103,6 +104,37 @@ pytest tests/ -v
 | Spark Master | http://localhost:8080 |
 | Spark Application | http://localhost:4040 |
 | Spark History Server | http://localhost:18080 |
+| Kafka UI | http://localhost:8085 |
+| Dashboard (local) | http://localhost:8050 |
+
+---
+
+## Streaming Kafka (Phase 3)
+
+```bash
+# 1. (Une fois) Démarrer la stack : Kafka + Spark
+docker compose up -d --build
+
+# 2. Le pipeline batch doit avoir été exécuté au moins une fois pour bootstrap
+#    le Delta `recipes_main` (sert de pool d'événements au producer).
+docker exec -it spark-master python run_pipeline.py run
+
+# 3. Démarrer le consumer Spark Structured Streaming (terminal 1)
+docker exec -it spark-master python run_pipeline.py stream-consume
+
+# 4. Démarrer le producer Kafka (terminal 2)
+docker exec -it spark-master python run_pipeline.py stream-produce --delay 2
+
+# 5. Lancer le dashboard (Dash) — KPIs rafraîchis toutes les 30s
+python src/le_grand_livre_des_recettes/dashboard/main.py
+```
+
+Les recettes injectées s'accumulent dans `data/outputs/delta/recipes_stream`
+et le dashboard ajoute le compteur "via stream Kafka (live)" mis à jour toutes
+les 30 secondes via `dcc.Interval`.
+
+Topic Kafka : `recipes-stream` (auto-créé). Bootstrap depuis l'hôte :
+`localhost:29092` — depuis les conteneurs : `kafka:9092`.
 
 ---
 
@@ -168,30 +200,57 @@ recettes avec au moins une valeur renseignée.
 
 ```
 recipes-pipeline/
-├── src/le_grand_livre_des_recettes/pipeline/
-│   ├── config.py               Chemins, paramètres Spark, write_disposition dlt
-│   ├── ingest.py               Orchestrateur Phase 1 (dlt)
-│   ├── spark_session.py        Factory SparkSession (batch + streaming)
-│   ├── models/
-│   │   └── schemas.py          Contrats Pydantic (documentation)
-│   ├── sources/
-│   │   ├── _utils.py           normalize_title + log_progress (partagés)
-│   │   ├── mit_recipes.py      dlt resources — MIT Recipe1M+
-│   │   └── kaggle_recipes.py   dlt resource — Kaggle Food.com
-│   └── transformers/
-│       ├── assemble.py         Chargement Parquet + jointures
-│       └── enrich.py           Colonnes dérivées + écriture tables finales
+├── src/le_grand_livre_des_recettes/
+│   ├── pipeline/
+│   │   ├── config.py               Chemins, paramètres Spark/Kafka, write_disposition dlt
+│   │   ├── ingest.py               Orchestrateur Phase 1 (dlt)
+│   │   ├── spark_session.py        Factory SparkSession (batch + streaming)
+│   │   ├── models/
+│   │   │   └── schemas.py          Contrats Pydantic (documentation)
+│   │   ├── sources/
+│   │   │   ├── _utils.py           normalize_title + log_progress (partagés)
+│   │   │   ├── mit_recipes.py      dlt resources — MIT Recipe1M+
+│   │   │   └── kaggle_recipes.py   dlt resource — Kaggle Food.com
+│   │   ├── transformers/
+│   │   │   ├── assemble.py         Chargement Parquet + jointures
+│   │   │   └── enrich.py           Colonnes dérivées + écriture tables finales
+│   │   └── streaming/
+│   │       ├── producer.py         Kafka producer — simule l'arrivée de nouvelles recettes
+│   │       └── consumer.py         Spark Structured Streaming — Kafka → Delta append
+│   └── dashboard/
+│       ├── main.py                 Point d'entrée Dash
+│       ├── ingestion.py            Delta → DuckDB (script de bootstrap)
+│       ├── assets/style.css
+│       └── app/
+│           ├── config.py           Palette de couleurs, constantes UI
+│           ├── data.py             Connexion DuckDB + KPIs batch précalculés
+│           ├── live.py             KPIs live via delta_scan(recipes_stream)
+│           ├── layout.py           Structure HTML/composants + dcc.Interval(30s)
+│           ├── charts.py           Graphiques Plotly (cross-filtering)
+│           └── callbacks.py        Callbacks Dash (filtres, recherche FTS, refresh live)
 ├── conf/spark-defaults.conf
-├── sql/                        Référence DuckDB (ancienne implémentation)
-├── data/raw/README.md          Instructions d'obtention des fichiers sources
+├── sql/                            Référence DuckDB (ancienne implémentation)
+├── data/
+│   ├── raw/README.md               Instructions d'obtention des fichiers sources
+│   ├── staging/                    Parquets intermédiaires dlt (auto-générés)
+│   └── outputs/
+│       ├── delta/
+│       │   ├── recipes_main/           Table batch principale (partitionnée nutri_score)
+│       │   ├── ingredients_index/      Index recette × ingrédient
+│       │   ├── recipes_nutrition_detail/
+│       │   └── recipes_stream/         Table streaming (append Kafka consumer)
+│       ├── checkpoints/recipes_stream/ Checkpoint Spark Structured Streaming
+│       └── recipes_catalog.duckdb      Base DuckDB pour le dashboard
+├── tests/
+├── notebooks/
 ├── .dlt/config.toml
-├── docker-compose.yml
+├── docker-compose.yml              Spark + Kafka (KRaft) + Kafka UI
 ├── Dockerfile
 ├── entrypoint.sh
 ├── Makefile
 ├── pyproject.toml
 ├── requirements.txt
-└── run_pipeline.py             CLI Typer (entrypoint Docker)
+└── run_pipeline.py                 CLI Typer : run / ingest / transform / info / stream-produce / stream-consume
 ```
 
 ---

@@ -164,6 +164,13 @@ def build_layout():
             dcc.Interval(
                 id="init-interval", interval=1, n_intervals=0, max_intervals=1
             ),
+            # Rafraîchissement live : KPIs et graphes re-calculés toutes les 30s
+            # pour intégrer les nouvelles recettes arrivées via Kafka stream.
+            dcc.Interval(
+                id="refresh-interval",
+                interval=30_000,
+                n_intervals=0,
+            ),
 
             # --- Ligne 1 : Titre / Image / KPIs ---
             html.Div(
@@ -273,17 +280,20 @@ def build_layout():
                     card(
                         className="card-p-22",
                         children=[
-                            html.P("Nombre de recettes total", className="kpi-title"),
-                            html.H2(fmt_tot, className="kpi-main-value"),
+                            html.P(
+                                "Nombre de recettes total",
+                                className="kpi-title",
+                            ),
+                            html.H2(fmt_tot, id="kpi-total", className="kpi-main-value"),
                             html.Hr(className="kpi-hr"),
                             html.Div([
-                                html.Span(fmt_img, className="kpi-val-lg kpi-val-a2"),
+                                html.Span(fmt_img, id="kpi-with-image", className="kpi-val-lg kpi-val-a2"),
                                 html.Span(" avec image", className="kpi-sub"),
                             ]),
                             html.Div(
                                 className="kpi-row",
                                 children=[
-                                    html.Span(fmt_nut, className="kpi-val-lg kpi-val-a4"),
+                                    html.Span(fmt_nut, id="kpi-with-nutrition", className="kpi-val-lg kpi-val-a4"),
                                     html.Span(" avec nutrition", className="kpi-sub"),
                                 ],
                             ),
@@ -291,8 +301,16 @@ def build_layout():
                             html.Div(
                                 className="kpi-row",
                                 children=[
-                                    html.Span(fmt_no_img, className="kpi-val-lg kpi-val-a3"),
+                                    html.Span(fmt_no_img, id="kpi-no-image", className="kpi-val-lg kpi-val-a3"),
                                     html.Span(" sans image", className="kpi-sub"),
+                                ],
+                            ),
+                            html.Hr(className="kpi-hr"),
+                            html.Div(
+                                className="kpi-row",
+                                children=[
+                                    html.Span("0", id="kpi-stream-count", className="kpi-val-lg kpi-val-a1"),
+                                    html.Span(" via stream Kafka (live)", className="kpi-sub"),
                                 ],
                             ),
                         ],

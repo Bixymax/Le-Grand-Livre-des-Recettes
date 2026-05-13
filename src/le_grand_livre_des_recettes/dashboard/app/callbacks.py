@@ -19,7 +19,11 @@ from .charts import (
     ingredients_top_chart, tags_top_chart
 )
 from .config import PALETTE, NUTRI_COLORS
-from .data import con, RECIPE_COLS
+from .data import (
+    con, RECIPE_COLS,
+    TOTAL_RECIPES, TOTAL_WITH_IMAGE, TOTAL_WITH_NUTRITION,
+)
+from .live import fetch_live_kpis
 
 
 # Helpers : Traitement des données
@@ -193,8 +197,38 @@ def _unpack_filters(filters: dict) -> tuple:
     return nutri, cook, kcal_min, kcal_max
 
 
+def _fmt_int(value: int) -> str:
+    """Formate un entier avec espaces insécables (10 000)."""
+    return f"{value:,}".replace(",", " ")
+
+
 # Enregistrement des callbacks
 def register_callbacks(app: dash.Dash):
+
+    # Rafraîchissement live des KPIs (toutes les 30s — alimenté par Kafka stream)
+    @app.callback(
+        Output("kpi-total", "children"),
+        Output("kpi-with-image", "children"),
+        Output("kpi-with-nutrition", "children"),
+        Output("kpi-no-image", "children"),
+        Output("kpi-stream-count", "children"),
+        Input("refresh-interval", "n_intervals"),
+        prevent_initial_call=False,
+    )
+    def refresh_live_kpis(_n):
+        kpis = fetch_live_kpis(
+            batch_total=TOTAL_RECIPES,
+            batch_with_image=TOTAL_WITH_IMAGE,
+            batch_with_nutrition=TOTAL_WITH_NUTRITION,
+        )
+        no_image = kpis["total"] - kpis["with_image"]
+        return (
+            _fmt_int(kpis["total"]),
+            _fmt_int(kpis["with_image"]),
+            _fmt_int(kpis["with_nutrition"]),
+            _fmt_int(no_image),
+            _fmt_int(kpis["stream_count"]),
+        )
 
     # Gestion du panneau de filtres (Store)
     @app.callback(
