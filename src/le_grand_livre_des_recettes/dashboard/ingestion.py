@@ -57,5 +57,60 @@ def run_ingestion():
     print(f"Ingestion terminée en {elapsed:.1f} secondes ! Base prête : {DB_PATH}")
 
 
+def incremental_update_from_stream(con: duckdb.DuckDBPyConnection) -> int:
+    """
+    Insère dans recipes_main les recettes du stream absentes du catalogue.
+
+    Utilise la connexion existante du dashboard pour éviter tout conflit
+    de verrou DuckDB. Retourne le nombre de lignes insérées.
+    """
+    stream_path = os.path.join(DATA_PATH, "recipes_stream")
+    if not os.path.isdir(os.path.join(stream_path, "_delta_log")):
+        return 0
+
+    try:
+        con.execute("LOAD delta;")
+    except Exception:
+        con.execute("INSTALL delta; LOAD delta;")
+
+    # Schéma cible
+    describe = con.execute("DESCRIBE recipes_main").fetchall()
+    main_cols = [row[0] for row in describe]
+    main_types = {row[0]: row[1] for row in describe}
+
+    # Colonnes disponibles dans la table stream
+    stream_col_set = {
+        row[0]
+        for row in con.execute(f"DESCRIBE delta_scan('{stream_path}')").fetchall()
+    }
+
+    # Sélection : colonne commune → s.col, absente → NULL casté au bon type
+    select_parts = [
+        f"s.{col}" if col in stream_col_set else f"NULL::{main_types[col]} AS {col}"
+        for col in main_cols
+    ]
+
+    before = con.execute("SELECT COUNT(*) FROM recipes_main").fetchone()[0]
+
+    con.execute(f"""
+        INSERT INTO recipes_main ({", ".join(main_cols)})
+        SELECT {", ".join(select_parts)}
+        FROM delta_scan('{stream_path}') s
+        WHERE s.recipe_id NOT IN (SELECT recipe_id FROM recipes_main)
+    """)
+
+    inserted = con.execute("SELECT COUNT(*) FROM recipes_main").fetchone()[0] - before
+
+    if inserted > 0:
+        con.execute("""
+            PRAGMA create_fts_index(
+                'recipes_main', 'recipe_id', 'title', 'ingredients_validated',
+                stemmer='english', stopwords='none', lower=1, strip_accents=1, overwrite=1
+            );
+        """)
+
+    return inserted
+
+
 if __name__ == "__main__":
     run_ingestion()

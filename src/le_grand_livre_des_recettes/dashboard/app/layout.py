@@ -171,6 +171,11 @@ def build_layout():
                 interval=30_000,
                 n_intervals=0,
             ),
+            dcc.Interval(
+                id="countdown-interval",
+                interval=1_000,
+                n_intervals=0,
+            ),
 
             # --- Ligne 1 : Titre / Image / KPIs ---
             html.Div(
@@ -484,6 +489,66 @@ def build_layout():
                             config={"displayModeBar": False},
                             className="graph-320",
                         )
+                    ),
+                ],
+            ),
+
+            # --- Bannière Flux en direct (style Statistiques du Livre) ---
+            html.Div(
+                className="stats-banner",
+                children=[
+                    html.Div(
+                        className="stats-col-right-border",
+                        children=[
+                            html.Div("0", id="stream-kpi-count", className="stats-val stats-val-a1"),
+                            html.Div("recettes reçues", className="stats-label"),
+                        ],
+                    ),
+                    html.Div(
+                        className="stats-col-right-border",
+                        children=[
+                            html.Div("—", id="stream-kpi-last-event", className="stats-val stats-val-a4"),
+                            html.Div("dernier événement", className="stats-label"),
+                        ],
+                    ),
+                    html.Div(
+                        className="stats-col-center",
+                        children=[
+                            html.Div("📡", className="stats-icon"),
+                            html.H3("Flux en direct", className="stats-h3"),
+                            html.P("Recettes Kafka temps réel", className="stats-p"),
+                        ],
+                    ),
+                    html.Div(
+                        className="stats-col-left-border",
+                        children=[
+                            html.Div("30s", id="stream-kpi-countdown", className="stats-val stats-val-a2"),
+                            html.Div("prochain refresh", className="stats-label"),
+                        ],
+                    ),
+                    html.Div(
+                        className="stats-col-left-border",
+                        children=[
+                            html.Div("—", id="stream-kpi-avg-kcal", className="stats-val stats-val-a4"),
+                            html.Div("kcal moy. (stream)", className="stats-label"),
+                        ],
+                    ),
+                ],
+            ),
+
+            # --- Logs des dernières recettes reçues ---
+            html.Div(
+                className="card",
+                style={"margin": "0 0 16px 0", "padding": "16px 20px"},
+                children=[
+                    html.Div(
+                        id="stream-log",
+                        children=[
+                            html.Span(
+                                "En attente du flux…",
+                                style={"color": "#8A8480", "fontStyle": "italic", "fontSize": "0.85rem"},
+                            )
+                        ],
                     ),
                 ],
             ),

@@ -23,7 +23,9 @@ from .data import (
     con, RECIPE_COLS,
     TOTAL_RECIPES, TOTAL_WITH_IMAGE, TOTAL_WITH_NUTRITION,
 )
-from .live import fetch_live_kpis
+from .live import fetch_all_stream_data
+from .data import con
+from ..ingestion import incremental_update_from_stream
 
 
 # Helpers : Traitement des données
@@ -205,29 +207,97 @@ def _fmt_int(value: int) -> str:
 # Enregistrement des callbacks
 def register_callbacks(app: dash.Dash):
 
-    # Rafraîchissement live des KPIs (toutes les 30s — alimenté par Kafka stream)
+    # Countdown : tourne entièrement côté navigateur, aucun aller-retour serveur
+    app.clientside_callback(
+        "function(n) { return (30 - (n % 30)) + 's'; }",
+        Output("stream-kpi-countdown", "children"),
+        Input("countdown-interval", "n_intervals"),
+    )
+
+    # Rafraîchissement live — insert stream → DuckDB puis un seul delta_scan
     @app.callback(
         Output("kpi-total", "children"),
         Output("kpi-with-image", "children"),
         Output("kpi-with-nutrition", "children"),
         Output("kpi-no-image", "children"),
         Output("kpi-stream-count", "children"),
+        Output("stream-kpi-count", "children"),
+        Output("stream-kpi-last-event", "children"),
+        Output("stream-kpi-avg-kcal", "children"),
+        Output("stream-log", "children"),
         Input("refresh-interval", "n_intervals"),
         prevent_initial_call=False,
     )
-    def refresh_live_kpis(_n):
-        kpis = fetch_live_kpis(
-            batch_total=TOTAL_RECIPES,
-            batch_with_image=TOTAL_WITH_IMAGE,
-            batch_with_nutrition=TOTAL_WITH_NUTRITION,
-        )
-        no_image = kpis["total"] - kpis["with_image"]
+    def refresh_all_live(_n):
+        # 1. Insérer les nouvelles recettes stream dans recipes_main
+        incremental_update_from_stream(con)
+
+        # 2. KPIs depuis DuckDB (inclut désormais les recettes stream insérées)
+        row = con.cursor().execute("""
+            SELECT
+                COUNT(*)                                             AS total,
+                COUNT(*) FILTER (WHERE has_image)                    AS with_image,
+                COUNT(*) FILTER (WHERE mit_energy_kcal IS NOT NULL)  AS with_nutrition
+            FROM recipes_main
+        """).fetchone()
+        total       = int(row[0] or 0)
+        with_image  = int(row[1] or 0)
+        with_nutr   = int(row[2] or 0)
+
+        # 3. KPIs stream depuis Delta (un seul scan)
+        data = fetch_all_stream_data()
+        count_str = _fmt_int(data["stream_count"]) if data["stream_count"] else "0"
+        ts = data["last_event_ts"]
+        ts_str = ts.strftime("%H:%M:%S") if hasattr(ts, "strftime") else (str(ts)[11:19] if ts else "—")
+        kcal_str = f"{int(data['avg_kcal'])} kcal" if data["avg_kcal"] is not None else "—"
+
+        # 4. Log des derniers événements
+        events = data["recent_events"]
+        if not events:
+            log = html.Span(
+                "En attente du flux…",
+                style={"color": PALETTE["muted"], "fontStyle": "italic", "fontSize": "0.85rem"},
+            )
+        else:
+            cook_icons = {"rapide": "⚡", "moyen": "⏱", "long": "🕐", "inconnu": "?"}
+            log = [
+                html.Div(
+                    style={
+                        "display": "flex", "alignItems": "center", "gap": "10px",
+                        "fontSize": "0.82rem", "padding": "4px 0",
+                        "borderBottom": f"1px solid {PALETTE['border']}",
+                    },
+                    children=[
+                        html.Span(
+                            ev["event_ts"].strftime("%H:%M:%S") if hasattr(ev["event_ts"], "strftime") else str(ev["event_ts"])[:19],
+                            style={"color": PALETTE["muted"], "fontVariantNumeric": "tabular-nums", "minWidth": "64px", "flexShrink": "0"},
+                        ),
+                        html.Span(
+                            ev["nutri_score"],
+                            style={
+                                "backgroundColor": NUTRI_COLORS.get(ev["nutri_score"], PALETTE["muted"]),
+                                "color": "white", "padding": "1px 6px", "borderRadius": "8px",
+                                "fontSize": "0.68rem", "fontWeight": "bold", "flexShrink": "0",
+                            },
+                        ),
+                        html.Span(
+                            f"{cook_icons.get(ev['cook_time_category'], '?')} {ev['cook_time_category']}",
+                            style={"color": PALETTE["muted"], "minWidth": "80px", "flexShrink": "0"},
+                        ),
+                        html.Span(
+                            ev["title"],
+                            style={"flex": "1", "whiteSpace": "nowrap", "overflow": "hidden", "textOverflow": "ellipsis", "color": PALETTE["text"]},
+                        ),
+                    ],
+                )
+                for ev in events
+            ]
+
         return (
-            _fmt_int(kpis["total"]),
-            _fmt_int(kpis["with_image"]),
-            _fmt_int(kpis["with_nutrition"]),
-            _fmt_int(no_image),
-            _fmt_int(kpis["stream_count"]),
+            _fmt_int(total), _fmt_int(with_image), _fmt_int(with_nutr),
+            _fmt_int(total - with_image), _fmt_int(data["stream_count"]),
+            count_str, ts_str, kcal_str,
+            log,
         )
 
     # Gestion du panneau de filtres (Store)
@@ -380,8 +450,9 @@ def register_callbacks(app: dash.Dash):
         Output("graph-tags-top", "figure"),
         Input("init-interval", "n_intervals"),
         Input("store-filters", "data"),
+        Input("refresh-interval", "n_intervals"),
     )
-    def load_all_charts(_, filters):
+    def load_all_charts(_, filters, _refresh):
         nutri, cook, kmin, kmax = _unpack_filters(filters)
         return (
             kcal_histogram(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax),

@@ -84,6 +84,21 @@ def _enrich_stream(df: DataFrame) -> DataFrame:
     )
 
 
+def _ensure_topic_exists(bootstrap_servers: str, topic: str) -> None:
+    """Create the Kafka topic if it doesn't already exist."""
+    from kafka.admin import KafkaAdminClient, NewTopic
+    from kafka.errors import TopicAlreadyExistsError
+
+    admin = KafkaAdminClient(bootstrap_servers=bootstrap_servers)
+    try:
+        admin.create_topics([NewTopic(name=topic, num_partitions=1, replication_factor=1)])
+        print(f"[consumer] Topic '{topic}' créé.")
+    except TopicAlreadyExistsError:
+        pass
+    finally:
+        admin.close()
+
+
 def _build_streaming_session(app_name: str = "recipes_stream_consumer") -> SparkSession:
     """
     Construit une SparkSession avec le connecteur Kafka chargé via Maven.
@@ -123,6 +138,7 @@ def run_consumer(
     bootstrap = bootstrap_servers or cfg.KAFKA_BOOTSTRAP_SERVERS
     topic_name = topic or cfg.KAFKA_TOPIC_RECIPES
 
+    _ensure_topic_exists(bootstrap, topic_name)
     spark = _build_streaming_session()
     print(f"[consumer] Spark prêt. Kafka : {bootstrap}, topic : {topic_name}")
 

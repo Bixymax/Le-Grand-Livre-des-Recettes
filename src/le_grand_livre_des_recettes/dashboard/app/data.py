@@ -5,7 +5,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(BASE_DIR, "..", "..", "..", "..", "data", "outputs", "recipes_catalog.duckdb")
 
 # Connexion globale en lecture seule
-con = duckdb.connect(DB_PATH, read_only=True)
+con = duckdb.connect(DB_PATH)
 print("DuckDB connecté à la base persistante")
 
 # Ajout du préfixe "recipes." ici

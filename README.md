@@ -101,11 +101,11 @@ pytest tests/ -v
 
 | Service | URL |
 |---------|-----|
-| Spark Master | http://localhost:8080 |
+| Dashboard | http://localhost:8080 |
+| Spark Master | http://localhost:8082 |
 | Spark Application | http://localhost:4040 |
 | Spark History Server | http://localhost:18080 |
 | Kafka UI | http://localhost:8085 |
-| Dashboard (local) | http://localhost:8050 |
 
 ---
 
@@ -121,6 +121,9 @@ docker exec -it spark-master python run_pipeline.py run
 
 # 3. Démarrer le consumer Spark Structured Streaming (terminal 1)
 docker exec -it spark-master python run_pipeline.py stream-consume
+
+# Pour repartir depuis le début du topic (ex : après suppression de recipes_stream) :
+docker exec -it spark-master python run_pipeline.py stream-consume --starting-offsets earliest
 
 # 4. Démarrer le producer Kafka (terminal 2)
 docker exec -it spark-master python run_pipeline.py stream-produce --delay 2

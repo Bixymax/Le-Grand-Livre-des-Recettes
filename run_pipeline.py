@@ -21,13 +21,13 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from le_grand_livre_des_recettes.pipeline import config as cfg
-from le_grand_livre_des_recettes.pipeline.ingest import run_ingestion
-from le_grand_livre_des_recettes.pipeline.spark_session import get_or_create_spark
-from le_grand_livre_des_recettes.pipeline.streaming.consumer import run_consumer
-from le_grand_livre_des_recettes.pipeline.streaming.producer import run_producer
-from le_grand_livre_des_recettes.pipeline.transformers.assemble import assemble
-from le_grand_livre_des_recettes.pipeline.transformers.enrich import write_final_tables
+from src.le_grand_livre_des_recettes.pipeline import config as cfg
+from src.le_grand_livre_des_recettes.pipeline.ingest import run_ingestion
+from src.le_grand_livre_des_recettes.pipeline.spark_session import get_or_create_spark
+from src.le_grand_livre_des_recettes.pipeline.streaming.consumer import run_consumer
+from src.le_grand_livre_des_recettes.pipeline.streaming.producer import run_producer
+from src.le_grand_livre_des_recettes.pipeline.transformers.assemble import assemble
+from src.le_grand_livre_des_recettes.pipeline.transformers.enrich import write_final_tables
 
 app = typer.Typer(help="Recipes Data Pipeline - dlt and PySpark")
 console = Console()

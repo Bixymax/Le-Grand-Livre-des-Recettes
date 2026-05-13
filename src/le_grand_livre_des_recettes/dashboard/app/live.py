@@ -3,10 +3,8 @@ Couche "live" du dashboard — agrège les recettes batch (Delta -> DuckDB) avec
 les nouvelles recettes du stream Kafka (Delta `recipes_stream`, lu via
 `delta_scan`).
 
-L'objectif est de garder l'affichage rafraîchi toutes les 30 secondes : on ne
-re-construit pas la base DuckDB à chaque tick (trop lent) ; on calcule
-simplement les KPIs sur le Delta streaming en mémoire et on les ajoute aux
-totaux batch précalculés au démarrage.
+Un seul delta_scan par cycle : les données sont chargées dans une table
+temporaire DuckDB, puis toutes les requêtes KPI/log s'exécutent dessus.
 """
 
 from __future__ import annotations
@@ -23,6 +21,15 @@ STREAM_DELTA_PATH = os.path.join(
     BASE_DIR, "..", "..", "..", "..", "data", "outputs", "delta", "recipes_stream"
 )
 
+_EMPTY: dict = {
+    "stream_count": 0,
+    "with_image": 0,
+    "with_nutrition": 0,
+    "last_event_ts": None,
+    "avg_kcal": None,
+    "recent_events": [],
+}
+
 
 class LiveKpis(TypedDict):
     total: int
@@ -38,40 +45,60 @@ def stream_exists() -> bool:
 
 @lru_cache(maxsize=1)
 def _live_connection() -> duckdb.DuckDBPyConnection:
-    """
-    Connexion DuckDB en mémoire dédiée aux lectures Delta du flux.
-
-    Séparée de la connexion principale (read-only sur le .duckdb persistant)
-    pour éviter de polluer la session du dashboard avec l'extension delta.
-    """
     con = duckdb.connect(":memory:")
     con.execute("INSTALL delta; LOAD delta;")
     return con
 
 
-def fetch_stream_kpis() -> dict[str, int]:
+def fetch_all_stream_data(n_recent: int = 10) -> dict:
     """
-    Calcule les KPIs sur le Delta streaming uniquement.
-
-    Retourne des zéros tant que le consumer n'a rien écrit (pas de _delta_log).
+    Charge la table Delta en une seule passe dans une table temporaire,
+    puis extrait KPIs et derniers événements en mémoire.
     """
     if not stream_exists():
-        return {"stream_count": 0, "with_image": 0, "with_nutrition": 0}
+        return dict(_EMPTY)
 
-    row = _live_connection().execute(
-        f"""
+    con = _live_connection()
+    con.execute(
+        f"CREATE OR REPLACE TEMP TABLE _stream AS SELECT * FROM delta_scan('{STREAM_DELTA_PATH}')"
+    )
+
+    kpi_row = con.execute("""
         SELECT
-            COUNT(*)                                              AS stream_count,
-            COUNT(*) FILTER (WHERE has_image)                     AS with_image,
-            COUNT(*) FILTER (WHERE mit_energy_kcal IS NOT NULL)   AS with_nutrition
-        FROM delta_scan('{STREAM_DELTA_PATH}')
-        """
-    ).fetchone()
+            COUNT(*)                                                              AS stream_count,
+            COUNT(*) FILTER (WHERE has_image)                                     AS with_image,
+            COUNT(*) FILTER (WHERE mit_energy_kcal IS NOT NULL)                   AS with_nutrition,
+            MAX(event_ts)                                                         AS last_event_ts,
+            ROUND(AVG(mit_energy_kcal) FILTER (WHERE mit_energy_kcal IS NOT NULL)) AS avg_kcal
+        FROM _stream
+    """).fetchone()
+
+    if kpi_row is None:
+        return dict(_EMPTY)
+
+    recent_rows = con.execute(f"""
+        SELECT title, nutri_score, cook_time_category, event_ts
+        FROM _stream
+        WHERE event_ts IS NOT NULL
+        ORDER BY event_ts DESC
+        LIMIT {n_recent}
+    """).fetchall()
 
     return {
-        "stream_count": int(row[0] or 0),
-        "with_image": int(row[1] or 0),
-        "with_nutrition": int(row[2] or 0),
+        "stream_count":  int(kpi_row[0] or 0),
+        "with_image":    int(kpi_row[1] or 0),
+        "with_nutrition": int(kpi_row[2] or 0),
+        "last_event_ts": kpi_row[3],
+        "avg_kcal":      kpi_row[4],
+        "recent_events": [
+            {
+                "title":             row[0] or "—",
+                "nutri_score":       row[1] or "?",
+                "cook_time_category": row[2] or "inconnu",
+                "event_ts":          row[3],
+            }
+            for row in recent_rows
+        ],
     }
 
 
@@ -80,14 +107,13 @@ def fetch_live_kpis(
     batch_total: int,
     batch_with_image: int,
     batch_with_nutrition: int,
+    stream_data: dict | None = None,
 ) -> LiveKpis:
-    """
-    Combine KPIs batch (statiques) et flux (dynamiques) pour affichage.
-    """
-    s = fetch_stream_kpis()
+    """Combine KPIs batch (statiques) et flux (dynamiques) pour affichage."""
+    s = stream_data if stream_data is not None else fetch_all_stream_data()
     return {
-        "total": batch_total + s["stream_count"],
-        "with_image": batch_with_image + s["with_image"],
+        "total":          batch_total    + s["stream_count"],
+        "with_image":     batch_with_image + s["with_image"],
         "with_nutrition": batch_with_nutrition + s["with_nutrition"],
-        "stream_count": s["stream_count"],
+        "stream_count":   s["stream_count"],
     }
