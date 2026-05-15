@@ -9,6 +9,7 @@ from urllib.request import urlopen
 from urllib.error import URLError, HTTPError
 
 import dash
+from dash.exceptions import PreventUpdate
 import numpy as np
 import pandas as pd
 from dash import Input, Output, State, html, dcc
@@ -242,13 +243,14 @@ def register_callbacks(app: dash.Dash):
         Output("stat-pct-quick", "children"),
         Output("stat-pct-ab", "children"),
         Output("stat-avg-cook", "children"),
+        Output("store-last-insert-count", "data"),
         Input("refresh-interval", "n_intervals"),
         Input("btn-toggle-stream", "n_clicks"),
         prevent_initial_call=False,
     )
     def refresh_all_live(_n, stream_n_clicks):
-        # 1. Insérer les nouvelles recettes stream dans recipes_main
-        incremental_update_from_stream(con)
+        # 1. Insérer les nouvelles recettes stream dans recipes_main et récupérer le count
+        inserted_count = incremental_update_from_stream(con)
 
         # 2. KPIs depuis DuckDB — filtre stream optionnel selon le toggle
         exclude_stream = (stream_n_clicks or 0) % 2 != 0
@@ -267,18 +269,19 @@ def register_callbacks(app: dash.Dash):
             FROM recipes_main
             {stream_where}
         """).fetchone()
-        total       = int(row[0] or 0)
-        with_image  = int(row[1] or 0)
-        with_nutr   = int(row[2] or 0)
-        avg_kcal    = row[3] or 0
-        avg_cook    = row[4] or 0
-        pct_quick   = row[5] or 0
-        pct_ab      = row[6] or 0
 
-        stat_avg_kcal  = f"{int(avg_kcal):,}".replace(",", " ")
+        total = int(row[0] or 0)
+        with_image = int(row[1] or 0)
+        with_nutr = int(row[2] or 0)
+        avg_kcal = row[3] or 0
+        avg_cook = row[4] or 0
+        pct_quick = row[5] or 0
+        pct_ab = row[6] or 0
+
+        stat_avg_kcal = f"{int(avg_kcal):,}".replace(",", " ")
         stat_pct_quick = f"{int(pct_quick)} %"
-        stat_pct_ab    = f"{int(pct_ab)} %"
-        stat_avg_cook  = f"{int(avg_cook)} min"
+        stat_pct_ab = f"{int(pct_ab)} %"
+        stat_avg_cook = f"{int(avg_cook)} min"
 
         # 3. KPIs stream depuis Delta (un seul scan)
         data = fetch_all_stream_data()
@@ -305,8 +308,10 @@ def register_callbacks(app: dash.Dash):
                     },
                     children=[
                         html.Span(
-                            ev["event_ts"].strftime("%H:%M:%S") if hasattr(ev["event_ts"], "strftime") else str(ev["event_ts"])[:19],
-                            style={"color": PALETTE["muted"], "fontVariantNumeric": "tabular-nums", "minWidth": "64px", "flexShrink": "0"},
+                            ev["event_ts"].strftime("%H:%M:%S") if hasattr(ev["event_ts"], "strftime") else str(
+                                ev["event_ts"])[:19],
+                            style={"color": PALETTE["muted"], "fontVariantNumeric": "tabular-nums", "minWidth": "64px",
+                                   "flexShrink": "0"},
                         ),
                         html.Span(
                             ev["nutri_score"],
@@ -322,7 +327,8 @@ def register_callbacks(app: dash.Dash):
                         ),
                         html.Span(
                             ev["title"],
-                            style={"flex": "1", "whiteSpace": "nowrap", "overflow": "hidden", "textOverflow": "ellipsis", "color": PALETTE["text"]},
+                            style={"flex": "1", "whiteSpace": "nowrap", "overflow": "hidden",
+                                   "textOverflow": "ellipsis", "color": PALETTE["text"]},
                         ),
                     ],
                 )
@@ -335,6 +341,7 @@ def register_callbacks(app: dash.Dash):
             count_str, ts_str, kcal_str,
             log,
             stat_avg_kcal, stat_pct_quick, stat_pct_ab, stat_avg_cook,
+            inserted_count
         )
 
     # Gestion du panneau de filtres (Store)
@@ -475,31 +482,69 @@ def register_callbacks(app: dash.Dash):
 
         return badges
 
-    # Mise à jour de tous les graphiques
+    def _should_prevent_update(insert_count):
+        """Helper pour vérifier s'il faut bloquer le recalcul des graphiques"""
+        if dash.ctx.triggered_id == "store-last-insert-count" and (insert_count is None or insert_count == 0):
+            raise PreventUpdate
+
     @app.callback(
         Output("graph-kcal-hist", "figure"),
+        Output("graph-scatter-kcal", "figure"),
+        Input("init-interval", "n_intervals"),
+        Input("store-filters", "data"),
+        Input("store-last-insert-count", "data"),
+    )
+    def update_energy_charts(_, filters, insert_count):
+        _should_prevent_update(insert_count)
+        nutri, cook, kmin, kmax = _unpack_filters(filters)
+        return (
+            kcal_histogram(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax),
+            scatter_saturates_sugars(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax)
+        )
+
+    @app.callback(
         Output("graph-nutri-pie", "figure"),
         Output("graph-nutri-bar", "figure"),
+        Input("init-interval", "n_intervals"),
+        Input("store-filters", "data"),
+        Input("store-last-insert-count", "data"),
+    )
+    def update_nutri_charts(_, filters, insert_count):
+        _should_prevent_update(insert_count)
+        nutri, cook, kmin, kmax = _unpack_filters(filters)
+        return (
+            nutri_pie(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax),
+            nutri_bar(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax)
+        )
+
+    @app.callback(
         Output("graph-cook-times", "figure"),
         Output("graph-cook-curve", "figure"),
-        Output("graph-scatter-kcal", "figure"),
+        Input("init-interval", "n_intervals"),
+        Input("store-filters", "data"),
+        Input("store-last-insert-count", "data"),
+    )
+    def update_cook_charts(_, filters, insert_count):
+        _should_prevent_update(insert_count)
+        nutri, cook, kmin, kmax = _unpack_filters(filters)
+        return (
+            cook_time_chart(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax),
+            cook_time_curve(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax)
+        )
+
+    @app.callback(
         Output("graph-ingredients-top", "figure"),
         Output("graph-tags-top", "figure"),
         Input("init-interval", "n_intervals"),
         Input("store-filters", "data"),
-        Input("refresh-interval", "n_intervals"),
+        Input("store-last-insert-count", "data"),
     )
-    def load_all_charts(_, filters, _refresh):
+    def update_tops_charts(_, filters, insert_count):
+        _should_prevent_update(insert_count)
         nutri, cook, kmin, kmax = _unpack_filters(filters)
         return (
-            kcal_histogram(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax),
-            nutri_pie(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax),
-            nutri_bar(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax),
-            cook_time_chart(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax),
-            cook_time_curve(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax),
-            scatter_saturates_sugars(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax),
             ingredients_top_chart(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax),
-            tags_top_chart(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax),
+            tags_top_chart(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax)
         )
 
     # Moteur de recherche FTS

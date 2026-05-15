@@ -8,9 +8,9 @@ et écrit en mode append dans la table Delta `recipes_stream`.
 La table Delta de sortie partage la même structure que `recipes_main` pour
 permettre une vue UNION dans DuckDB côté dashboard.
 """
-
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from pyspark.sql import DataFrame, SparkSession
@@ -27,7 +27,6 @@ from pyspark.sql.types import (
 
 from le_grand_livre_des_recettes.pipeline import config as cfg
 from le_grand_livre_des_recettes.pipeline.spark_session import get_or_create_spark
-
 
 EVENT_SCHEMA = StructType(
     [
@@ -115,12 +114,12 @@ def _build_streaming_session(app_name: str = "recipes_stream_consumer") -> Spark
 
 
 def run_consumer(
-    *,
-    bootstrap_servers: str | None = None,
-    topic: str | None = None,
-    trigger_seconds: int = 10,
-    starting_offsets: str = "latest",
-    await_termination: bool = True,
+        *,
+        bootstrap_servers: str | None = None,
+        topic: str | None = None,
+        trigger_seconds: int = 30,
+        starting_offsets: str = "latest",
+        await_termination: bool = True,
 ) -> StreamingQuery:
     """
     Démarre le consumer Spark Structured Streaming.
@@ -174,6 +173,13 @@ def run_consumer(
         f"[consumer] Streaming démarré -> {cfg.OUT_RECIPES_STREAM} "
         f"(trigger={trigger_seconds}s). Ctrl+C pour arrêter."
     )
+
+    maintenance_thread = threading.Thread(
+        target=_background_maintenance_loop,
+        args=(3600,),
+        daemon=True
+    )
+    maintenance_thread.start()
 
     if await_termination:
         try:

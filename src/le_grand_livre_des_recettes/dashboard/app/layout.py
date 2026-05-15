@@ -173,6 +173,7 @@ def build_layout():
             dcc.Store(id="store-selected-recipe-id", data=None),
             dcc.Store(id="store-recipe-idx", data=0),
             dcc.Store(id="store-recipe-image-urls"),
+            dcc.Store(id="store-last-insert-count", data=0),
             dcc.Store(
                 id="store-filters",
                 data={

@@ -175,21 +175,14 @@ def incremental_update_from_stream(con: duckdb.DuckDBPyConnection) -> int:
     ]
 
     before = cur.execute("SELECT COUNT(*) FROM recipes_main").fetchone()[0]
-    cur.execute(f"""
-        INSERT INTO recipes_main ({", ".join(main_cols)})
-        SELECT {", ".join(select_parts)}
-        FROM delta_scan('{stream_path}') s
-        WHERE s.recipe_id NOT IN (SELECT recipe_id FROM recipes_main)
-    """)
-    inserted = cur.execute("SELECT COUNT(*) FROM recipes_main").fetchone()[0] - before
-
-    if inserted > 0:
-        cur.execute("""
-            PRAGMA create_fts_index(
-                'recipes_main', 'recipe_id', 'title', 'ingredients_validated',
-                stemmer='english', stopwords='none', lower=1, strip_accents=1, overwrite=1
-            );
+    con.execute(f"""
+            INSERT INTO recipes_main ({", ".join(main_cols)})
+            SELECT {", ".join(select_parts)}
+            FROM delta_scan('{STREAM_DELTA_PATH}') s
+            LEFT JOIN recipes_main m ON s.recipe_id = m.recipe_id
+            WHERE m.recipe_id IS NULL
         """)
+    inserted = con.execute("SELECT COUNT(*) FROM recipes_main").fetchone()[0] - before
 
     _stream_insert_mtime = mtime
     return inserted
