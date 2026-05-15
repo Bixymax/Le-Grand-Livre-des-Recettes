@@ -17,9 +17,14 @@ import duckdb
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-STREAM_DELTA_PATH = os.path.join(
-    BASE_DIR, "..", "..", "..", "..", "data", "outputs", "delta", "recipes_stream"
-)
+DELTA_DIR = os.path.join(BASE_DIR, "..", "..", "..", "..", "data", "outputs", "delta")
+STREAM_DELTA_PATH = os.path.join(DELTA_DIR, "recipes_stream")
+
+# Mtime-based cache: évite de rescanner Delta si aucun nouveau fichier n'est arrivé.
+_delta_ready_cons: set[int] = set()
+_stream_scan_mtime: float = -1.0
+_stream_data_cache: dict = {}
+_stream_insert_mtime: float = -1.0
 
 _EMPTY: dict = {
     "stream_count": 0,
@@ -43,6 +48,25 @@ def stream_exists() -> bool:
     return os.path.isdir(os.path.join(STREAM_DELTA_PATH, "_delta_log"))
 
 
+def _delta_log_mtime() -> float:
+    """Retourne le mtime du _delta_log ; -1.0 si inexistant."""
+    try:
+        return os.path.getmtime(os.path.join(STREAM_DELTA_PATH, "_delta_log"))
+    except OSError:
+        return -1.0
+
+
+def _ensure_delta(con: duckdb.DuckDBPyConnection) -> None:
+    """Charge l'extension delta sur `con` une seule fois (identifié par id())."""
+    cid = id(con)
+    if cid not in _delta_ready_cons:
+        try:
+            con.execute("LOAD delta;")
+        except Exception:
+            con.execute("INSTALL delta; LOAD delta;")
+        _delta_ready_cons.add(cid)
+
+
 @lru_cache(maxsize=1)
 def _live_connection() -> duckdb.DuckDBPyConnection:
     con = duckdb.connect(":memory:")
@@ -54,9 +78,16 @@ def fetch_all_stream_data(n_recent: int = 10) -> dict:
     """
     Charge la table Delta en une seule passe dans une table temporaire,
     puis extrait KPIs et derniers événements en mémoire.
+    Le résultat est mis en cache jusqu'au prochain changement du _delta_log.
     """
+    global _stream_scan_mtime, _stream_data_cache
+
     if not stream_exists():
         return dict(_EMPTY)
+
+    mtime = _delta_log_mtime()
+    if mtime > 0 and mtime == _stream_scan_mtime and _stream_data_cache:
+        return _stream_data_cache
 
     con = _live_connection()
     con.execute(
@@ -84,7 +115,7 @@ def fetch_all_stream_data(n_recent: int = 10) -> dict:
         LIMIT {n_recent}
     """).fetchall()
 
-    return {
+    result = {
         "stream_count":  int(kpi_row[0] or 0),
         "with_image":    int(kpi_row[1] or 0),
         "with_nutrition": int(kpi_row[2] or 0),
@@ -100,6 +131,68 @@ def fetch_all_stream_data(n_recent: int = 10) -> dict:
             for row in recent_rows
         ],
     }
+    _stream_scan_mtime = mtime
+    _stream_data_cache = result
+    return result
+
+
+def incremental_update_from_stream(con: duckdb.DuckDBPyConnection) -> int:
+    """
+    Insère dans recipes_main les recettes stream absentes du catalogue.
+    Utilise la connexion existante pour éviter tout conflit de verrou DuckDB.
+    Retourne le nombre de lignes insérées.
+    """
+    global _stream_insert_mtime
+
+    if not stream_exists():
+        return 0
+
+    mtime = _delta_log_mtime()
+    if mtime > 0 and mtime == _stream_insert_mtime:
+        return 0
+
+    _ensure_delta(con)
+
+    # Utiliser cursor() pour isoler chaque résultat et éviter les conflits d'état DuckDB
+    cur = con.cursor()
+    stream_path = STREAM_DELTA_PATH.replace("\\", "/")
+
+    describe = cur.execute("DESCRIBE recipes_main").fetchall()
+    main_cols = [row[0] for row in describe]
+    main_types = {row[0]: row[1] for row in describe}
+
+    if not main_cols:
+        return 0
+
+    stream_col_set = {
+        row[0]
+        for row in cur.execute(f"DESCRIBE SELECT * FROM delta_scan('{stream_path}')").fetchall()
+    }
+
+    select_parts = [
+        f"s.{col}" if col in stream_col_set else f"NULL::{main_types[col]} AS {col}"
+        for col in main_cols
+    ]
+
+    before = cur.execute("SELECT COUNT(*) FROM recipes_main").fetchone()[0]
+    cur.execute(f"""
+        INSERT INTO recipes_main ({", ".join(main_cols)})
+        SELECT {", ".join(select_parts)}
+        FROM delta_scan('{stream_path}') s
+        WHERE s.recipe_id NOT IN (SELECT recipe_id FROM recipes_main)
+    """)
+    inserted = cur.execute("SELECT COUNT(*) FROM recipes_main").fetchone()[0] - before
+
+    if inserted > 0:
+        cur.execute("""
+            PRAGMA create_fts_index(
+                'recipes_main', 'recipe_id', 'title', 'ingredients_validated',
+                stemmer='english', stopwords='none', lower=1, strip_accents=1, overwrite=1
+            );
+        """)
+
+    _stream_insert_mtime = mtime
+    return inserted
 
 
 def fetch_live_kpis(

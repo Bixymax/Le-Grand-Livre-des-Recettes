@@ -120,12 +120,33 @@ def build_filter_panel():
                             ),
                         ],
                     ),
-                    # Bouton reset
-                    html.Button(
-                        "✕ Réinitialiser",
-                        id="btn-reset-filters",
-                        n_clicks=0,
-                        className="btn-reset",
+                    # Bouton reset + toggle stream
+                    html.Div(
+                        style={
+                            "display": "flex",
+                            "flexDirection": "column",
+                            "alignItems": "stretch",
+                            "justifyContent": "center",
+                            "gap": "6px",
+                        },
+                        children=[
+                            html.Button(
+                                "✕ Réinitialiser",
+                                id="btn-reset-filters",
+                                n_clicks=0,
+                                className="btn-reset",
+                            ),
+                            html.Button(
+                                "● Stream inclus",
+                                id="btn-toggle-stream",
+                                n_clicks=0,
+                                className="btn-reset",
+                                style={
+                                    "border": f"1px solid {PALETTE['accent2']}",
+                                    "color": PALETTE["accent2"],
+                                },
+                            ),
+                        ],
                     ),
                 ],
             ),
@@ -361,14 +382,14 @@ def build_layout():
                     html.Div(
                         className="stats-col-right-border",
                         children=[
-                            html.Div(f"{int(AVG_KCAL):,}".replace(",", "\u202f"), className="stats-val stats-val-a1"),
+                            html.Div(f"{int(AVG_KCAL):,}".replace(",", "\u202f"), id="stat-avg-kcal", className="stats-val stats-val-a1"),
                             html.Div("kcal moy. / recette", className="stats-label"),
                         ],
                     ),
                     html.Div(
                         className="stats-col-right-border",
                         children=[
-                            html.Div(f"{int(PCT_QUICK)} %", className="stats-val stats-val-a2"),
+                            html.Div(f"{int(PCT_QUICK)} %", id="stat-pct-quick", className="stats-val stats-val-a2"),
                             html.Div("recettes rapides", className="stats-label"),
                         ],
                     ),
@@ -383,14 +404,14 @@ def build_layout():
                     html.Div(
                         className="stats-col-left-border",
                         children=[
-                            html.Div(f"{int(PCT_A_B)} %", className="stats-val stats-val-a2"),
+                            html.Div(f"{int(PCT_A_B)} %", id="stat-pct-ab", className="stats-val stats-val-a2"),
                             html.Div("Nutri-Score A ou B", className="stats-label"),
                         ],
                     ),
                     html.Div(
                         className="stats-col-left-border",
                         children=[
-                            html.Div(f"{int(AVG_COOK_MIN)} min", className="stats-val stats-val-a4"),
+                            html.Div(f"{int(AVG_COOK_MIN)} min", id="stat-avg-cook", className="stats-val stats-val-a4"),
                             html.Div("temps moy. de cuisson", className="stats-label"),
                         ],
                     ),

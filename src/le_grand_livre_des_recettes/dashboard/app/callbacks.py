@@ -19,13 +19,15 @@ from .charts import (
     ingredients_top_chart, tags_top_chart
 )
 from .config import PALETTE, NUTRI_COLORS
+
+_BTN_STREAM_ON  = {"border": f"1px solid {PALETTE['accent2']}", "color": PALETTE["accent2"]}
+_BTN_STREAM_OFF = {"border": f"1px solid {PALETTE['accent3']}", "color": PALETTE["accent3"]}
 from .data import (
     con, RECIPE_COLS,
     TOTAL_RECIPES, TOTAL_WITH_IMAGE, TOTAL_WITH_NUTRITION,
 )
-from .live import fetch_all_stream_data
+from .live import fetch_all_stream_data, incremental_update_from_stream
 from .data import con
-from ..ingestion import incremental_update_from_stream
 
 
 # Helpers : Traitement des données
@@ -159,7 +161,7 @@ def _placeholder_image() -> html.Div:
 
 def _fetch_recipe_by_id(recipe_id: str) -> pd.DataFrame:
     """Récupère toutes les données nécessaires pour l'affichage d'une recette."""
-    return con.execute(f"""
+    return con.cursor().execute(f"""
         SELECT {RECIPE_COLS}
         FROM recipes_main m
         LEFT JOIN recipes_nutrition n ON m.recipe_id = n.recipe_id
@@ -174,7 +176,7 @@ def _extract_recipe_payload(df: pd.DataFrame) -> tuple:
     title, idx, short, content, ings = _build_recipe_text_outputs(row)
 
     urls = row.get("image_urls")
-    urls_list = urls.tolist() if isinstance(urls, np.ndarray) else (urls or [])
+    urls_list = urls.tolist() if isinstance(urls, np.ndarray) else (urls if isinstance(urls, list) else [])
 
     urls_payload = {
         "image_url": row.get("image_url") or "",
@@ -214,6 +216,17 @@ def register_callbacks(app: dash.Dash):
         Input("countdown-interval", "n_intervals"),
     )
 
+    # Apparence du bouton toggle stream (vert = inclus, rouge = exclu)
+    @app.callback(
+        Output("btn-toggle-stream", "children"),
+        Output("btn-toggle-stream", "style"),
+        Input("btn-toggle-stream", "n_clicks"),
+    )
+    def update_stream_toggle(n_clicks):
+        if (n_clicks or 0) % 2 == 0:
+            return "● Stream inclus", _BTN_STREAM_ON
+        return "○ Stream exclu", _BTN_STREAM_OFF
+
     # Rafraîchissement live — insert stream → DuckDB puis un seul delta_scan
     @app.callback(
         Output("kpi-total", "children"),
@@ -225,24 +238,47 @@ def register_callbacks(app: dash.Dash):
         Output("stream-kpi-last-event", "children"),
         Output("stream-kpi-avg-kcal", "children"),
         Output("stream-log", "children"),
+        Output("stat-avg-kcal", "children"),
+        Output("stat-pct-quick", "children"),
+        Output("stat-pct-ab", "children"),
+        Output("stat-avg-cook", "children"),
         Input("refresh-interval", "n_intervals"),
+        Input("btn-toggle-stream", "n_clicks"),
         prevent_initial_call=False,
     )
-    def refresh_all_live(_n):
+    def refresh_all_live(_n, stream_n_clicks):
         # 1. Insérer les nouvelles recettes stream dans recipes_main
         incremental_update_from_stream(con)
 
-        # 2. KPIs depuis DuckDB (inclut désormais les recettes stream insérées)
-        row = con.cursor().execute("""
+        # 2. KPIs depuis DuckDB — filtre stream optionnel selon le toggle
+        exclude_stream = (stream_n_clicks or 0) % 2 != 0
+        stream_where = "WHERE recipe_id NOT LIKE 'stream-%'" if exclude_stream else ""
+        row = con.cursor().execute(f"""
             SELECT
-                COUNT(*)                                             AS total,
-                COUNT(*) FILTER (WHERE has_image)                    AS with_image,
-                COUNT(*) FILTER (WHERE mit_energy_kcal IS NOT NULL)  AS with_nutrition
+                COUNT(*)                                                              AS total,
+                COUNT(*) FILTER (WHERE has_image)                                     AS with_image,
+                COUNT(*) FILTER (WHERE mit_energy_kcal IS NOT NULL)                   AS with_nutrition,
+                ROUND(AVG(mit_energy_kcal) FILTER (WHERE mit_energy_kcal IS NOT NULL)) AS avg_kcal,
+                ROUND(AVG(cook_minutes) FILTER (WHERE cook_minutes BETWEEN 1 AND 600)) AS avg_cook,
+                ROUND(100.0 * COUNT(*) FILTER (WHERE cook_time_category = 'rapide')
+                      / NULLIF(COUNT(*), 0))                                          AS pct_quick,
+                ROUND(100.0 * COUNT(*) FILTER (WHERE nutri_score IN ('A', 'B'))
+                      / NULLIF(COUNT(*) FILTER (WHERE nutri_score IS NOT NULL), 0))   AS pct_ab
             FROM recipes_main
+            {stream_where}
         """).fetchone()
         total       = int(row[0] or 0)
         with_image  = int(row[1] or 0)
         with_nutr   = int(row[2] or 0)
+        avg_kcal    = row[3] or 0
+        avg_cook    = row[4] or 0
+        pct_quick   = row[5] or 0
+        pct_ab      = row[6] or 0
+
+        stat_avg_kcal  = f"{int(avg_kcal):,}".replace(",", " ")
+        stat_pct_quick = f"{int(pct_quick)} %"
+        stat_pct_ab    = f"{int(pct_ab)} %"
+        stat_avg_cook  = f"{int(avg_cook)} min"
 
         # 3. KPIs stream depuis Delta (un seul scan)
         data = fetch_all_stream_data()
@@ -298,6 +334,7 @@ def register_callbacks(app: dash.Dash):
             _fmt_int(total - with_image), _fmt_int(data["stream_count"]),
             count_str, ts_str, kcal_str,
             log,
+            stat_avg_kcal, stat_pct_quick, stat_pct_ab, stat_avg_cook,
         )
 
     # Gestion du panneau de filtres (Store)
@@ -564,7 +601,7 @@ def register_callbacks(app: dash.Dash):
                 return _extract_recipe_payload(df)
 
         # Sinon (initialisation ou bouton aléatoire), on prend une recette au hasard avec image
-        random_id_df = con.execute("SELECT recipe_id FROM recipes_main WHERE has_image = true USING SAMPLE 1").df()
+        random_id_df = con.cursor().execute("SELECT recipe_id FROM recipes_main WHERE has_image = true USING SAMPLE 1").df()
 
         if random_id_df.empty:
             return html.Div("Pas d'image"), "Pas de recette", 0, "", "", "", {}

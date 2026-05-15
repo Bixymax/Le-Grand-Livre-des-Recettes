@@ -22,33 +22,48 @@ from typing import Any
 from le_grand_livre_des_recettes.pipeline import config as cfg
 
 
+_PRODUCER_COLS = [
+    "recipe_id", "title", "instructions_text", "ingredients_validated",
+    "cook_minutes", "image_url", "mit_energy_kcal", "tags",
+]
+
+# Chemin du fichier JSON de recettes personnalisées (prioritaire sur le Delta)
+_JSON_RECIPES_PATH = Path(cfg.PROJECT_ROOT) / "data" / "new_recipes.json"
+
+
 def _read_sample_recipes(n: int) -> list[dict[str, Any]]:
     """
-    Charge un échantillon de recettes du Delta `recipes_main` pour servir de
-    pool d'événements à émettre. Utilise pyarrow + deltalake (pas Spark) pour
-    éviter de démarrer une JVM dans le producer.
+    Charge le pool de recettes pour le producer.
+
+    Priorité :
+      1. `data/new_recipes.json` si le fichier existe → recettes personnalisées
+      2. Delta `recipes_main` en fallback
     """
+    if _JSON_RECIPES_PATH.exists():
+        print(f"[producer] Source : {_JSON_RECIPES_PATH.name}")
+        with _JSON_RECIPES_PATH.open(encoding="utf-8") as f:
+            rows = json.load(f)
+        # On ne garde que les champs attendus par _build_event
+        rows = [{k: r.get(k) for k in _PRODUCER_COLS} for r in rows]
+        random.shuffle(rows)
+        # Le fichier peut avoir moins de n entrées : on boucle pour remplir le pool
+        pool = []
+        while len(pool) < n:
+            pool.extend(rows)
+        return pool[:n]
+
     from deltalake import DeltaTable
 
     delta_path = Path(cfg.OUT_RECIPES_MAIN)
     if not delta_path.exists():
         raise FileNotFoundError(
-            f"Delta table introuvable : {delta_path}. "
-            "Lance d'abord le pipeline batch (python run_pipeline.py run)."
+            f"Ni {_JSON_RECIPES_PATH.name} ni la table Delta ({delta_path}) "
+            "ne sont disponibles. Créez data/new_recipes.json ou lancez le pipeline batch."
         )
 
+    print(f"[producer] Source : Delta {delta_path}")
     dt = DeltaTable(str(delta_path))
-    cols = [
-        "recipe_id",
-        "title",
-        "instructions_text",
-        "ingredients_validated",
-        "cook_minutes",
-        "image_url",
-        "mit_energy_kcal",
-        "tags",
-    ]
-    table = dt.to_pyarrow_table(columns=cols).slice(0, max(n * 4, 200))
+    table = dt.to_pyarrow_table(columns=_PRODUCER_COLS).slice(0, max(n * 4, 200))
     rows = table.to_pylist()
     random.shuffle(rows)
     return rows[:n]
