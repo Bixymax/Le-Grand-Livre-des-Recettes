@@ -21,36 +21,31 @@ from typing import Any
 
 from le_grand_livre_des_recettes.pipeline import config as cfg
 
-
 _PRODUCER_COLS = [
     "recipe_id", "title", "instructions_text", "ingredients_validated",
     "cook_minutes", "image_url", "mit_energy_kcal", "tags",
+    "fat_g", "protein_g", "salt_g", "saturates_g", "sugars_g",
 ]
 
 # Chemin du fichier JSON de recettes personnalisées (prioritaire sur le Delta)
 _JSON_RECIPES_PATH = Path(cfg.PROJECT_ROOT) / "data" / "new_recipes.json"
 
 
-def _read_sample_recipes(n: int) -> list[dict[str, Any]]:
+def _load_recipes() -> list[dict[str, Any]]:
     """
-    Charge le pool de recettes pour le producer.
+    Charge toutes les recettes disponibles pour le producer.
 
     Priorité :
       1. `data/new_recipes.json` si le fichier existe → recettes personnalisées
-      2. Delta `recipes_main` en fallback
+      2. Delta `recipes_main` en fallback (toutes les recettes)
     """
     if _JSON_RECIPES_PATH.exists():
         print(f"[producer] Source : {_JSON_RECIPES_PATH.name}")
         with _JSON_RECIPES_PATH.open(encoding="utf-8") as f:
             rows = json.load(f)
-        # On ne garde que les champs attendus par _build_event
         rows = [{k: r.get(k) for k in _PRODUCER_COLS} for r in rows]
         random.shuffle(rows)
-        # Le fichier peut avoir moins de n entrées : on boucle pour remplir le pool
-        pool = []
-        while len(pool) < n:
-            pool.extend(rows)
-        return pool[:n]
+        return rows
 
     from deltalake import DeltaTable
 
@@ -63,10 +58,9 @@ def _read_sample_recipes(n: int) -> list[dict[str, Any]]:
 
     print(f"[producer] Source : Delta {delta_path}")
     dt = DeltaTable(str(delta_path))
-    table = dt.to_pyarrow_table(columns=_PRODUCER_COLS).slice(0, max(n * 4, 200))
-    rows = table.to_pylist()
+    rows = dt.to_pyarrow_table(columns=_PRODUCER_COLS).to_pylist()
     random.shuffle(rows)
-    return rows[:n]
+    return rows
 
 
 def _build_event(template: dict[str, Any]) -> dict[str, Any]:
@@ -86,6 +80,11 @@ def _build_event(template: dict[str, Any]) -> dict[str, Any]:
         "image_url": template.get("image_url"),
         "mit_energy_kcal": template.get("mit_energy_kcal"),
         "tags": template.get("tags") or [],
+        "fat_g": template.get("fat_g"),
+        "protein_g": template.get("protein_g"),
+        "salt_g": template.get("salt_g"),
+        "saturates_g": template.get("saturates_g"),
+        "sugars_g": template.get("sugars_g"),
         "event_ts_ms": int(time.time() * 1000),
     }
 
@@ -120,9 +119,8 @@ def run_producer(
         linger_ms=10,
     )
 
-    print("[producer] Chargement d'un échantillon de recettes depuis Delta...")
-    pool_size = max(max_events or 1000, 200)
-    pool = _read_sample_recipes(pool_size)
+    print("[producer] Chargement des recettes...")
+    pool = _load_recipes()
     print(f"[producer] {len(pool)} recettes chargées comme pool d'événements.")
 
     print(

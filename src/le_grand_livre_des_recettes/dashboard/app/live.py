@@ -10,6 +10,7 @@ temporaire DuckDB, puis toutes les requêtes KPI/log s'exécutent dessus.
 from __future__ import annotations
 
 import os
+import threading
 from functools import lru_cache
 from typing import TypedDict
 
@@ -25,6 +26,7 @@ _delta_ready_cons: set[int] = set()
 _stream_scan_mtime: float = -1.0
 _stream_data_cache: dict = {}
 _stream_insert_mtime: float = -1.0
+_insert_lock = threading.Lock()
 
 _EMPTY: dict = {
     "stream_count": 0,
@@ -67,6 +69,9 @@ def _ensure_delta(con: duckdb.DuckDBPyConnection) -> None:
         _delta_ready_cons.add(cid)
 
 
+_live_lock = threading.Lock()
+
+
 @lru_cache(maxsize=1)
 def _live_connection() -> duckdb.DuckDBPyConnection:
     con = duckdb.connect(":memory:")
@@ -89,31 +94,32 @@ def fetch_all_stream_data(n_recent: int = 10) -> dict:
     if mtime > 0 and mtime == _stream_scan_mtime and _stream_data_cache:
         return _stream_data_cache
 
-    con = _live_connection()
-    con.execute(
-        f"CREATE OR REPLACE TEMP TABLE _stream AS SELECT * FROM delta_scan('{STREAM_DELTA_PATH}')"
-    )
+    with _live_lock:
+        con = _live_connection()
+        con.execute(
+            f"CREATE OR REPLACE TEMP TABLE _stream AS SELECT * FROM delta_scan('{STREAM_DELTA_PATH}')"
+        )
 
-    kpi_row = con.execute("""
-        SELECT
-            COUNT(*)                                                              AS stream_count,
-            COUNT(*) FILTER (WHERE has_image)                                     AS with_image,
-            COUNT(*) FILTER (WHERE mit_energy_kcal IS NOT NULL)                   AS with_nutrition,
-            MAX(event_ts)                                                         AS last_event_ts,
-            ROUND(AVG(mit_energy_kcal) FILTER (WHERE mit_energy_kcal IS NOT NULL)) AS avg_kcal
-        FROM _stream
-    """).fetchone()
+        kpi_row = con.execute("""
+            SELECT
+                COUNT(*)                                                              AS stream_count,
+                COUNT(*) FILTER (WHERE has_image)                                     AS with_image,
+                COUNT(*) FILTER (WHERE mit_energy_kcal IS NOT NULL)                   AS with_nutrition,
+                MAX(event_ts)                                                         AS last_event_ts,
+                ROUND(AVG(mit_energy_kcal) FILTER (WHERE mit_energy_kcal IS NOT NULL)) AS avg_kcal
+            FROM _stream
+        """).fetchone()
 
-    if kpi_row is None:
-        return dict(_EMPTY)
+        if kpi_row is None:
+            return dict(_EMPTY)
 
-    recent_rows = con.execute(f"""
-        SELECT title, nutri_score, cook_time_category, event_ts
-        FROM _stream
-        WHERE event_ts IS NOT NULL
-        ORDER BY event_ts DESC
-        LIMIT {n_recent}
-    """).fetchall()
+        recent_rows = con.execute(f"""
+            SELECT title, nutri_score, cook_time_category, event_ts
+            FROM _stream
+            WHERE event_ts IS NOT NULL
+            ORDER BY event_ts DESC
+            LIMIT {n_recent}
+        """).fetchall()
 
     result = {
         "stream_count":  int(kpi_row[0] or 0),
@@ -151,41 +157,71 @@ def incremental_update_from_stream(con: duckdb.DuckDBPyConnection) -> int:
     if mtime > 0 and mtime == _stream_insert_mtime:
         return 0
 
-    _ensure_delta(con)
+    with _insert_lock:
+        # Re-vérifier dans le lock : un thread concurrent a peut-être déjà fait le travail
+        if mtime > 0 and mtime == _stream_insert_mtime:
+            return 0
 
-    # Utiliser cursor() pour isoler chaque résultat et éviter les conflits d'état DuckDB
-    cur = con.cursor()
-    stream_path = STREAM_DELTA_PATH.replace("\\", "/")
+        _ensure_delta(con)
 
-    describe = cur.execute("DESCRIBE recipes_main").fetchall()
-    main_cols = [row[0] for row in describe]
-    main_types = {row[0]: row[1] for row in describe}
+        cur = con.cursor()
+        stream_path = STREAM_DELTA_PATH.replace("\\", "/")
 
-    if not main_cols:
-        return 0
+        describe = cur.execute("DESCRIBE recipes_main").fetchall()
+        main_cols = [row[0] for row in describe]
+        main_types = {row[0]: row[1] for row in describe}
 
-    stream_col_set = {
-        row[0]
-        for row in cur.execute(f"DESCRIBE SELECT * FROM delta_scan('{stream_path}')").fetchall()
-    }
+        if not main_cols:
+            return 0
 
-    select_parts = [
-        f"s.{col}" if col in stream_col_set else f"NULL::{main_types[col]} AS {col}"
-        for col in main_cols
-    ]
+        stream_col_set = {
+            row[0]
+            for row in cur.execute(f"DESCRIBE SELECT * FROM delta_scan('{stream_path}')").fetchall()
+        }
 
-    before = cur.execute("SELECT COUNT(*) FROM recipes_main").fetchone()[0]
-    con.execute(f"""
+        # Détecter un reset du Delta : si DuckDB a plus de lignes stream que le Delta, purger les stale rows
+        delta_count = cur.execute(f"SELECT COUNT(*) FROM delta_scan('{stream_path}')").fetchone()[0]
+        duckdb_stream_count = cur.execute("SELECT COUNT(*) FROM recipes_main WHERE recipe_id LIKE 'stream-%'").fetchone()[0]
+        if duckdb_stream_count > delta_count:
+            con.execute("DELETE FROM recipes_main WHERE recipe_id LIKE 'stream-%'")
+            con.execute("DELETE FROM recipes_nutrition WHERE recipe_id LIKE 'stream-%'")
+
+        select_parts = [
+            f"s.{col}" if col in stream_col_set else f"NULL::{main_types[col]} AS {col}"
+            for col in main_cols
+        ]
+
+        before = cur.execute("SELECT COUNT(*) FROM recipes_main").fetchone()[0]
+        con.execute(f"""
             INSERT INTO recipes_main ({", ".join(main_cols)})
             SELECT {", ".join(select_parts)}
             FROM delta_scan('{STREAM_DELTA_PATH}') s
             LEFT JOIN recipes_main m ON s.recipe_id = m.recipe_id
             WHERE m.recipe_id IS NULL
         """)
-    inserted = con.execute("SELECT COUNT(*) FROM recipes_main").fetchone()[0] - before
+        inserted = con.execute("SELECT COUNT(*) FROM recipes_main").fetchone()[0] - before
 
-    _stream_insert_mtime = mtime
-    return inserted
+        # Insérer aussi dans recipes_nutrition si le stream contient des données nutritionnelles
+        _NUTRITION_COLS = ["fat_g", "protein_g", "salt_g", "saturates_g", "sugars_g"]
+        available = [c for c in _NUTRITION_COLS if c in stream_col_set]
+        if inserted > 0 and available:
+            nutr_select = ", ".join(
+                f"s.{c}" if c in available else f"NULL AS {c}"
+                for c in _NUTRITION_COLS
+            )
+            con.execute(f"""
+                INSERT INTO recipes_nutrition (recipe_id, {", ".join(_NUTRITION_COLS)})
+                SELECT s.recipe_id, {nutr_select}
+                FROM delta_scan('{STREAM_DELTA_PATH}') s
+                LEFT JOIN recipes_nutrition n ON s.recipe_id = n.recipe_id
+                WHERE n.recipe_id IS NULL
+                  AND (s.fat_g IS NOT NULL OR s.protein_g IS NOT NULL
+                       OR s.salt_g IS NOT NULL OR s.saturates_g IS NOT NULL
+                       OR s.sugars_g IS NOT NULL)
+            """)
+
+        _stream_insert_mtime = mtime
+        return inserted
 
 
 def fetch_live_kpis(

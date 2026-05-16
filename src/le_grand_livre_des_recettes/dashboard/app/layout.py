@@ -137,7 +137,7 @@ def build_filter_panel():
                                 className="btn-reset",
                             ),
                             html.Button(
-                                "● Stream inclus",
+                                "● Stream + Main",
                                 id="btn-toggle-stream",
                                 n_clicks=0,
                                 className="btn-reset",
@@ -174,6 +174,7 @@ def build_layout():
             dcc.Store(id="store-recipe-idx", data=0),
             dcc.Store(id="store-recipe-image-urls"),
             dcc.Store(id="store-last-insert-count", data=0),
+            dcc.Store(id="store-stream-state", data={"state": 0, "live_count": 0}),
             dcc.Store(
                 id="store-filters",
                 data={

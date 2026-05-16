@@ -21,8 +21,9 @@ from .charts import (
 )
 from .config import PALETTE, NUTRI_COLORS
 
-_BTN_STREAM_ON  = {"border": f"1px solid {PALETTE['accent2']}", "color": PALETTE["accent2"]}
-_BTN_STREAM_OFF = {"border": f"1px solid {PALETTE['accent3']}", "color": PALETTE["accent3"]}
+_BTN_STREAM_ALL    = {"border": f"1px solid {PALETTE['accent2']}", "color": PALETTE["accent2"]}   # vert  — tout inclus
+_BTN_STREAM_ONLY   = {"border": f"1px solid {PALETTE['accent1']}", "color": PALETTE["accent1"]}   # orange — stream seul
+_BTN_STREAM_EXCL   = {"border": f"1px solid {PALETTE['accent3']}", "color": PALETTE["accent3"]}   # rouge  — main seul
 from .data import (
     con, RECIPE_COLS,
     TOTAL_RECIPES, TOTAL_WITH_IMAGE, TOTAL_WITH_NUTRITION,
@@ -217,16 +218,22 @@ def register_callbacks(app: dash.Dash):
         Input("countdown-interval", "n_intervals"),
     )
 
-    # Apparence du bouton toggle stream (vert = inclus, rouge = exclu)
+    # Apparence du bouton toggle stream (3 états : vert → orange → rouge) + mise à jour du store
     @app.callback(
         Output("btn-toggle-stream", "children"),
         Output("btn-toggle-stream", "style"),
+        Output("store-stream-state", "data"),
         Input("btn-toggle-stream", "n_clicks"),
     )
     def update_stream_toggle(n_clicks):
-        if (n_clicks or 0) % 2 == 0:
-            return "● Stream inclus", _BTN_STREAM_ON
-        return "○ Stream exclu", _BTN_STREAM_OFF
+        state = (n_clicks or 0) % 3
+        live_count = fetch_all_stream_data()["stream_count"]
+        store = {"state": state, "live_count": live_count}
+        if state == 0:
+            return "● Stream + Main",  _BTN_STREAM_ALL,  store
+        if state == 1:
+            return "◑ Stream seul",    _BTN_STREAM_ONLY, store
+        return     "○ Main seul",       _BTN_STREAM_EXCL, store
 
     # Rafraîchissement live — insert stream → DuckDB puis un seul delta_scan
     @app.callback(
@@ -252,39 +259,55 @@ def register_callbacks(app: dash.Dash):
         # 1. Insérer les nouvelles recettes stream dans recipes_main et récupérer le count
         inserted_count = incremental_update_from_stream(con)
 
-        # 2. KPIs depuis DuckDB — filtre stream optionnel selon le toggle
-        exclude_stream = (stream_n_clicks or 0) % 2 != 0
-        stream_where = "WHERE recipe_id NOT LIKE 'stream-%'" if exclude_stream else ""
-        row = con.cursor().execute(f"""
+        # 2a. KPIs globaux — toujours sans filtre (le toggle ne les affecte pas)
+        global_row = con.cursor().execute("""
             SELECT
-                COUNT(*)                                                              AS total,
-                COUNT(*) FILTER (WHERE has_image)                                     AS with_image,
-                COUNT(*) FILTER (WHERE mit_energy_kcal IS NOT NULL)                   AS with_nutrition,
-                ROUND(AVG(mit_energy_kcal) FILTER (WHERE mit_energy_kcal IS NOT NULL)) AS avg_kcal,
-                ROUND(AVG(cook_minutes) FILTER (WHERE cook_minutes BETWEEN 1 AND 600)) AS avg_cook,
-                ROUND(100.0 * COUNT(*) FILTER (WHERE cook_time_category = 'rapide')
-                      / NULLIF(COUNT(*), 0))                                          AS pct_quick,
-                ROUND(100.0 * COUNT(*) FILTER (WHERE nutri_score IN ('A', 'B'))
-                      / NULLIF(COUNT(*) FILTER (WHERE nutri_score IS NOT NULL), 0))   AS pct_ab
+                COUNT(*)                                             AS total,
+                COUNT(*) FILTER (WHERE has_image)                    AS with_image,
+                COUNT(*) FILTER (WHERE mit_energy_kcal IS NOT NULL)  AS with_nutrition
             FROM recipes_main
-            {stream_where}
         """).fetchone()
 
-        total = int(row[0] or 0)
-        with_image = int(row[1] or 0)
-        with_nutr = int(row[2] or 0)
-        avg_kcal = row[3] or 0
-        avg_cook = row[4] or 0
-        pct_quick = row[5] or 0
-        pct_ab = row[6] or 0
+        total     = int(global_row[0] or 0)
+        with_image = int(global_row[1] or 0)
+        with_nutr  = int(global_row[2] or 0)
 
-        stat_avg_kcal = f"{int(avg_kcal):,}".replace(",", " ")
-        stat_pct_quick = f"{int(pct_quick)} %"
-        stat_pct_ab = f"{int(pct_ab)} %"
-        stat_avg_cook = f"{int(avg_cook)} min"
-
-        # 3. KPIs stream depuis Delta (un seul scan)
+        # 3. KPIs stream depuis Delta — doit précéder les stats pour live_stream_count
         data = fetch_all_stream_data()
+
+        # 2b. Stats analytiques — filtrées selon le toggle (0=tout, 1=stream seul, 2=main seul)
+        stream_state = (stream_n_clicks or 0) % 3
+        live_stream_count = data["stream_count"]
+
+        # En mode stream seul sans données live, on affiche "—" plutôt que des valeurs stale du DuckDB
+        if stream_state == 1 and live_stream_count == 0:
+            stat_avg_kcal = stat_pct_quick = stat_pct_ab = stat_avg_cook = "—"
+        else:
+            if stream_state == 1:
+                stream_where = "WHERE recipe_id LIKE 'stream-%'"
+            elif stream_state == 2:
+                stream_where = "WHERE recipe_id NOT LIKE 'stream-%'"
+            else:
+                stream_where = ""
+            stat_row = con.cursor().execute(f"""
+                SELECT
+                    ROUND(AVG(mit_energy_kcal) FILTER (WHERE mit_energy_kcal IS NOT NULL)) AS avg_kcal,
+                    ROUND(AVG(cook_minutes) FILTER (WHERE cook_minutes BETWEEN 1 AND 600)) AS avg_cook,
+                    ROUND(100.0 * COUNT(*) FILTER (WHERE cook_time_category = 'rapide')
+                          / NULLIF(COUNT(*), 0))                                           AS pct_quick,
+                    ROUND(100.0 * COUNT(*) FILTER (WHERE nutri_score IN ('A', 'B'))
+                          / NULLIF(COUNT(*) FILTER (WHERE nutri_score IS NOT NULL), 0))    AS pct_ab
+                FROM recipes_main
+                {stream_where}
+            """).fetchone()
+            avg_kcal  = stat_row[0] or 0
+            avg_cook  = stat_row[1] or 0
+            pct_quick = stat_row[2] or 0
+            pct_ab    = stat_row[3] or 0
+            stat_avg_kcal  = f"{int(avg_kcal):,}".replace(",", " ")
+            stat_pct_quick = f"{int(pct_quick)} %"
+            stat_pct_ab    = f"{int(pct_ab)} %"
+            stat_avg_cook  = f"{int(avg_cook)} min"
         count_str = _fmt_int(data["stream_count"]) if data["stream_count"] else "0"
         ts = data["last_event_ts"]
         ts_str = ts.strftime("%H:%M:%S") if hasattr(ts, "strftime") else (str(ts)[11:19] if ts else "—")
@@ -493,13 +516,17 @@ def register_callbacks(app: dash.Dash):
         Input("init-interval", "n_intervals"),
         Input("store-filters", "data"),
         Input("store-last-insert-count", "data"),
+        Input("store-stream-state", "data"),
     )
-    def update_energy_charts(_, filters, insert_count):
+    def update_energy_charts(_, filters, insert_count, stream_store):
         _should_prevent_update(insert_count)
         nutri, cook, kmin, kmax = _unpack_filters(filters)
+        ss = stream_store or {}
         return (
-            kcal_histogram(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax),
-            scatter_saturates_sugars(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax)
+            kcal_histogram(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax,
+                           stream_state=ss.get("state", 0), live_stream_count=ss.get("live_count", 0)),
+            scatter_saturates_sugars(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax,
+                                     stream_state=ss.get("state", 0), live_stream_count=ss.get("live_count", 0)),
         )
 
     @app.callback(
@@ -508,13 +535,17 @@ def register_callbacks(app: dash.Dash):
         Input("init-interval", "n_intervals"),
         Input("store-filters", "data"),
         Input("store-last-insert-count", "data"),
+        Input("store-stream-state", "data"),
     )
-    def update_nutri_charts(_, filters, insert_count):
+    def update_nutri_charts(_, filters, insert_count, stream_store):
         _should_prevent_update(insert_count)
         nutri, cook, kmin, kmax = _unpack_filters(filters)
+        ss = stream_store or {}
         return (
-            nutri_pie(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax),
-            nutri_bar(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax)
+            nutri_pie(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax,
+                      stream_state=ss.get("state", 0), live_stream_count=ss.get("live_count", 0)),
+            nutri_bar(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax,
+                      stream_state=ss.get("state", 0), live_stream_count=ss.get("live_count", 0)),
         )
 
     @app.callback(
@@ -523,13 +554,17 @@ def register_callbacks(app: dash.Dash):
         Input("init-interval", "n_intervals"),
         Input("store-filters", "data"),
         Input("store-last-insert-count", "data"),
+        Input("store-stream-state", "data"),
     )
-    def update_cook_charts(_, filters, insert_count):
+    def update_cook_charts(_, filters, insert_count, stream_store):
         _should_prevent_update(insert_count)
         nutri, cook, kmin, kmax = _unpack_filters(filters)
+        ss = stream_store or {}
         return (
-            cook_time_chart(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax),
-            cook_time_curve(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax)
+            cook_time_chart(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax,
+                            stream_state=ss.get("state", 0), live_stream_count=ss.get("live_count", 0)),
+            cook_time_curve(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax,
+                            stream_state=ss.get("state", 0), live_stream_count=ss.get("live_count", 0)),
         )
 
     @app.callback(
@@ -538,13 +573,17 @@ def register_callbacks(app: dash.Dash):
         Input("init-interval", "n_intervals"),
         Input("store-filters", "data"),
         Input("store-last-insert-count", "data"),
+        Input("store-stream-state", "data"),
     )
-    def update_tops_charts(_, filters, insert_count):
+    def update_tops_charts(_, filters, insert_count, stream_store):
         _should_prevent_update(insert_count)
         nutri, cook, kmin, kmax = _unpack_filters(filters)
+        ss = stream_store or {}
         return (
-            ingredients_top_chart(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax),
-            tags_top_chart(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax)
+            ingredients_top_chart(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax,
+                                  stream_state=ss.get("state", 0), live_stream_count=ss.get("live_count", 0)),
+            tags_top_chart(nutri_scores=nutri, cook_cats=cook, kcal_min=kmin, kcal_max=kmax,
+                           stream_state=ss.get("state", 0), live_stream_count=ss.get("live_count", 0)),
         )
 
     # Moteur de recherche FTS

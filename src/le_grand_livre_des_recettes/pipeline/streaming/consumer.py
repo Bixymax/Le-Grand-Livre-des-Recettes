@@ -10,7 +10,10 @@ permettre une vue UNION dans DuckDB côté dashboard.
 """
 from __future__ import annotations
 
+import shutil
+import signal
 import threading
+import time
 from pathlib import Path
 
 from pyspark.sql import DataFrame, SparkSession
@@ -18,6 +21,7 @@ from pyspark.sql import functions as F
 from pyspark.sql.streaming import StreamingQuery
 from pyspark.sql.types import (
     ArrayType,
+    DoubleType,
     IntegerType,
     LongType,
     StringType,
@@ -27,6 +31,21 @@ from pyspark.sql.types import (
 
 from le_grand_livre_des_recettes.pipeline import config as cfg
 from le_grand_livre_des_recettes.pipeline.spark_session import get_or_create_spark
+from le_grand_livre_des_recettes.pipeline.streaming.maintenance import run_maintenance
+
+# Mettre à True pour supprimer recipes_stream + checkpoint au démarrage du consumer
+RESET_STREAM_ON_START: bool = True
+
+
+def _reset_stream() -> None:
+    """Supprime le Delta recipes_stream et son checkpoint pour repartir de zéro."""
+    for path in (Path(cfg.OUT_RECIPES_STREAM), Path(cfg.STREAM_CHECKPOINT_DIR)):
+        if path.exists():
+            shutil.rmtree(path)
+            print(f"[consumer] Supprimé : {path}")
+        else:
+            print(f"[consumer] Déjà absent : {path}")
+
 
 EVENT_SCHEMA = StructType(
     [
@@ -38,9 +57,35 @@ EVENT_SCHEMA = StructType(
         StructField("image_url", StringType()),
         StructField("mit_energy_kcal", StringType()),  # cast après parse
         StructField("tags", ArrayType(StringType())),
+        StructField("fat_g", DoubleType()),
+        StructField("protein_g", DoubleType()),
+        StructField("salt_g", DoubleType()),
+        StructField("saturates_g", DoubleType()),
+        StructField("sugars_g", DoubleType()),
         StructField("event_ts_ms", LongType()),
     ]
 )
+
+
+def _background_maintenance_loop(interval_seconds: int):
+    """
+    Boucle infinie qui tourne en tâche de fond.
+    Elle attend 'interval_seconds' puis lance la maintenance Delta.
+    """
+    if run_maintenance is None:
+        print("[consumer-maintenance] Script maintenance.py introuvable, optimisation désactivée.")
+        return
+
+    print(f"[consumer-maintenance] Thread démarré. Optimisation toutes les {interval_seconds}s.")
+
+    while True:
+        # On attend avant la première exécution
+        time.sleep(interval_seconds)
+        try:
+            print("[consumer-maintenance] Lancement automatique de l'optimisation...")
+            run_maintenance()
+        except Exception as e:
+            print(f"[consumer-maintenance] Erreur lors de la maintenance : {e}")
 
 
 def _nutri_score_col(kcal_col: str) -> F.Column:
@@ -134,6 +179,9 @@ def run_consumer(
     Returns:
         Le StreamingQuery actif (utile pour les tests).
     """
+    if RESET_STREAM_ON_START:
+        _reset_stream()
+
     bootstrap = bootstrap_servers or cfg.KAFKA_BOOTSTRAP_SERVERS
     topic_name = topic or cfg.KAFKA_TOPIC_RECIPES
 
@@ -182,10 +230,21 @@ def run_consumer(
     maintenance_thread.start()
 
     if await_termination:
-        try:
-            query.awaitTermination()
-        except KeyboardInterrupt:
-            print("\n[consumer] Interruption — arrêt du flux...")
+        stop_event = threading.Event()
+
+        def _handle_stop(signum, frame):  # noqa: ARG001
+            print(f"\n[consumer] Signal {signum} reçu — arrêt en cours...")
+            stop_event.set()
+
+        signal.signal(signal.SIGTERM, _handle_stop)
+        signal.signal(signal.SIGINT, _handle_stop)
+
+        # awaitTermination bloque la JVM ; on poll depuis Python pour rester réactif aux signaux.
+        while query.isActive and not stop_event.is_set():
+            time.sleep(1)
+
+        if query.isActive:
+            print("[consumer] Arrêt du StreamingQuery...")
             query.stop()
 
     return query

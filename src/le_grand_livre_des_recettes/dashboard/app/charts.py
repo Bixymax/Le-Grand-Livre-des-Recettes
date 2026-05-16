@@ -13,12 +13,15 @@ from .data import con
 
 def _exec(query: str, params: list):
     """Wrapper con.execute qui évite le bug DuckDB avec params=[] vide, et gère le multi-threading."""
-    # Création d'un curseur local pour la sécurité des threads
     cursor = con.cursor()
-
     if params:
         return cursor.execute(query, params)
     return cursor.execute(query)
+
+
+def _empty_figure(msg: str = "Aucune donnée disponible") -> go.Figure:
+    return go.Figure().update_layout(**PLOT_LAYOUT, title=dict(text=msg, x=0.5, font_size=13))
+
 
 def _build_where(
         nutri_scores: list[str] | None = None,
@@ -27,13 +30,19 @@ def _build_where(
         kcal_max: float | None = None,
         table_prefix: str = "",
         base_clauses: list[str] | None = None,
+        stream_state: int = 0,
 ) -> tuple[str, list]:
-    """
-    Génère dynamiquement la clause WHERE et ses paramètres.
-    """
+    """Génère dynamiquement la clause WHERE et ses paramètres."""
     clauses = base_clauses.copy() if base_clauses else []
     params = []
     p = table_prefix
+
+    if stream_state == 1:
+        clauses.append(f"{p}recipe_id LIKE ?")
+        params.append("stream-%")
+    elif stream_state == 2:
+        clauses.append(f"{p}recipe_id NOT LIKE ?")
+        params.append("stream-%")
 
     if nutri_scores:
         clauses.append(f"{p}nutri_score IN ({','.join(['?'] * len(nutri_scores))})")
@@ -55,10 +64,14 @@ def _build_where(
     return where_str, params
 
 
-def kcal_histogram(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None) -> go.Figure:
+def kcal_histogram(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None,
+                   stream_state: int = 0, live_stream_count: int = 0) -> go.Figure:
+    if stream_state == 1 and live_stream_count == 0:
+        return _empty_figure("Aucune recette stream disponible")
     where_str, params = _build_where(
         nutri_scores, cook_cats, kcal_min, kcal_max,
-        base_clauses=["mit_energy_kcal IS NOT NULL", "mit_energy_kcal < 3500"]
+        base_clauses=["mit_energy_kcal IS NOT NULL", "mit_energy_kcal < 3500"],
+        stream_state=stream_state,
     )
 
     df = _exec(f"SELECT mit_energy_kcal AS energy_kcal FROM recipes_main {where_str}", params).df()
@@ -76,8 +89,12 @@ def kcal_histogram(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=No
     return fig
 
 
-def nutri_pie(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None) -> go.Figure:
-    where_str, params = _build_where(nutri_scores, cook_cats, kcal_min, kcal_max, table_prefix="m.")
+def nutri_pie(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None,
+              stream_state: int = 0, live_stream_count: int = 0) -> go.Figure:
+    if stream_state == 1 and live_stream_count == 0:
+        return _empty_figure("Aucune recette stream disponible")
+    where_str, params = _build_where(nutri_scores, cook_cats, kcal_min, kcal_max,
+                                     table_prefix="m.", stream_state=stream_state)
     joins = "JOIN recipes_main m ON n.recipe_id = m.recipe_id" if where_str else ""
 
     query = f"""
@@ -105,9 +122,13 @@ def nutri_pie(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None) -
     return fig
 
 
-def nutri_bar(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None) -> go.Figure:
+def nutri_bar(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None,
+              stream_state: int = 0, live_stream_count: int = 0) -> go.Figure:
+    if stream_state == 1 and live_stream_count == 0:
+        return _empty_figure("Aucune recette stream disponible")
     where_str, params = _build_where(nutri_scores, cook_cats, kcal_min, kcal_max,
-                                     base_clauses=["nutri_score IS NOT NULL"])
+                                     base_clauses=["nutri_score IS NOT NULL"],
+                                     stream_state=stream_state)
 
     df = _exec(f"""
         SELECT nutri_score AS score, COUNT(*) AS count
@@ -134,10 +155,14 @@ def nutri_bar(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None) -
     return fig
 
 
-def cook_time_chart(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None) -> go.Figure:
+def cook_time_chart(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None,
+                    stream_state: int = 0, live_stream_count: int = 0) -> go.Figure:
+    if stream_state == 1 and live_stream_count == 0:
+        return _empty_figure("Aucune recette stream disponible")
     where_str, params = _build_where(
         nutri_scores, cook_cats, kcal_min, kcal_max,
-        base_clauses=["cook_time_category IN ('rapide', 'moyen', 'long')"]
+        base_clauses=["cook_time_category IN ('rapide', 'moyen', 'long')"],
+        stream_state=stream_state,
     )
 
     df = _exec(f"""
@@ -168,10 +193,14 @@ def cook_time_chart(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=N
     return fig
 
 
-def cook_time_curve(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None) -> go.Figure:
+def cook_time_curve(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None,
+                    stream_state: int = 0, live_stream_count: int = 0) -> go.Figure:
+    if stream_state == 1 and live_stream_count == 0:
+        return _empty_figure("Aucune recette stream disponible")
     where_str, params = _build_where(
         nutri_scores, cook_cats, kcal_min, kcal_max,
-        base_clauses=["cook_minutes IS NOT NULL", "cook_minutes BETWEEN 1 AND 300"]
+        base_clauses=["cook_minutes IS NOT NULL", "cook_minutes BETWEEN 1 AND 300"],
+        stream_state=stream_state,
     )
 
     df = _exec(f"""
@@ -195,13 +224,16 @@ def cook_time_curve(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=N
     return fig
 
 
-def scatter_saturates_sugars(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None) -> go.Figure:
+def scatter_saturates_sugars(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None,
+                             stream_state: int = 0, live_stream_count: int = 0) -> go.Figure:
+    if stream_state == 1 and live_stream_count == 0:
+        return _empty_figure("Aucune recette stream disponible")
     base_clauses = [
         "n.saturates_g IS NOT NULL", "n.sugars_g IS NOT NULL",
         "m.nutri_score IS NOT NULL", "n.saturates_g BETWEEN 0 AND 60", "n.sugars_g BETWEEN 0 AND 100"
     ]
     where_str, params = _build_where(nutri_scores, cook_cats, kcal_min, kcal_max, table_prefix="m.",
-                                     base_clauses=base_clauses)
+                                     base_clauses=base_clauses, stream_state=stream_state)
 
     df = _exec(f"""
         SELECT n.saturates_g, n.sugars_g, COALESCE(m.nutri_score, '?') AS nutri_score, m.title
@@ -210,14 +242,19 @@ def scatter_saturates_sugars(nutri_scores=None, cook_cats=None, kcal_min=None, k
         {where_str} USING SAMPLE 2000 ROWS
     """, params).df()
 
+    if df.empty:
+        msg = "Données nutritionnelles non disponibles pour les recettes stream" if stream_state == 1 \
+            else "Aucune donnée nutritionnelle disponible"
+        return _empty_figure(msg)
+
     fig = go.Figure()
     for score in ["A", "B", "C", "D", "E", "?"]:
         sub = df[df["nutri_score"] == score]
         if not sub.empty:
-            fig.add_trace(go.Scatter(
+            fig.add_trace(go.Scattergl(
                 x=sub["saturates_g"], y=sub["sugars_g"], mode="markers", name=f"Score {score}", text=sub["title"],
                 marker=dict(color=NUTRI_COLORS.get(score, PALETTE["muted"]), size=5, opacity=0.6),
-                hovertemplate="<b>%{text}</b><br>Nutri-Score %{name}<br>Graisses saturées: %{x:.1f}g<br>Sucres: %{y:.1f}g<extra></extra>"
+                hovertemplate="<b>%{text}</b><br>Nutri-Score %{name}<br>Graisses saturées: %{x:.1f}g<br>Sucres: %{y:.1f}g<extra></extra>",
             ))
     # 1. On applique le thème global
     fig.update_layout(**PLOT_LAYOUT)
@@ -235,9 +272,11 @@ def scatter_saturates_sugars(nutri_scores=None, cook_cats=None, kcal_min=None, k
 
 
 def _generic_top_chart(sql_field: str, color: str, title: str, nutri_scores, cook_cats, kcal_min, kcal_max,
-                       top_n: int) -> go.Figure:
+                       top_n: int, stream_state: int = 0, live_stream_count: int = 0) -> go.Figure:
     """Helper générique pour les tops (ingrédients et tags) afin d'éviter la répétition."""
-    where_str, params = _build_where(nutri_scores, cook_cats, kcal_min, kcal_max)
+    if stream_state == 1 and live_stream_count == 0:
+        return _empty_figure("Aucune recette stream disponible")
+    where_str, params = _build_where(nutri_scores, cook_cats, kcal_min, kcal_max, stream_state=stream_state)
     params.append(top_n)
 
     df = _exec(f"""
@@ -267,11 +306,13 @@ def _generic_top_chart(sql_field: str, color: str, title: str, nutri_scores, coo
     return fig
 
 
-def ingredients_top_chart(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None, top_n=15) -> go.Figure:
+def ingredients_top_chart(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None, top_n=15,
+                          stream_state: int = 0, live_stream_count: int = 0) -> go.Figure:
     return _generic_top_chart("ingredients_validated", PALETTE["accent2"], "Ingrédients", nutri_scores, cook_cats,
-                              kcal_min, kcal_max, top_n)
+                              kcal_min, kcal_max, top_n, stream_state=stream_state, live_stream_count=live_stream_count)
 
 
-def tags_top_chart(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None, top_n=15) -> go.Figure:
+def tags_top_chart(nutri_scores=None, cook_cats=None, kcal_min=None, kcal_max=None, top_n=15,
+                   stream_state: int = 0, live_stream_count: int = 0) -> go.Figure:
     return _generic_top_chart("tags", PALETTE["accent3"], "Tags & Catégories", nutri_scores, cook_cats, kcal_min,
-                              kcal_max, top_n)
+                              kcal_max, top_n, stream_state=stream_state, live_stream_count=live_stream_count)
